@@ -6,6 +6,26 @@
 
 A less simple, even more ultimate market board plugin caters for ME at present, and power users who have the same requirements as me.
 
+## Installation
+
+ComplicatedMarketBoard is distributed through a custom Dalamud plugin repository, not the default Dalamud plugin list.
+
+In game:
+
+1. Open `/xlsettings`.
+2. Go to `Experimental`.
+3. Add this URL under `Custom Plugin Repositories`:
+
+```text
+https://github.com/FranFkntastic/ComplicatedMarketBoard/releases/latest/download/repo.json
+```
+
+4. Save and close settings.
+5. Open `/xlplugins`.
+6. Search for `ComplicatedMarketBoard` and install it.
+
+Future updates will appear through Dalamud as long as the custom repository remains enabled. For release packaging details, see [docs/custom-plugin-repository.md](docs/custom-plugin-repository.md).
+
 ### Features
 
 - **Compact UI design**, that won't eat out your screen even on your grandma's 800x600 CRT
