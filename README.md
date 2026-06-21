@@ -1,10 +1,10 @@
-# SimpleMarketBoard
+# ComplicatedMarketBoard
 
 ![2024-02-05_01-30-52_337](https://github.com/Elypha/SimpleMarketBoard/assets/30290883/767325f5-a9d9-4cdd-bb70-25ea8c1818da)
 
 ## Introduction
 
-A simple but ultimate market board plugin caters for me at present, and potential power users who have the same requirements as me.
+A less simple, even more ultimate market board plugin caters for ME at present, and power users who have the same requirements as me.
 
 ### Features
 
@@ -26,7 +26,7 @@ A simple but ultimate market board plugin caters for me at present, and potentia
 
 Please feel free to send a request if any feature you want is not yet available via:
 - GitHub Issues
-- Discord (Dalamud Official Discord > PLUGINS > plugin-help-forum > Simple Market Board)
+- Discord (@franfkntastic)
 
 **Data**
 
@@ -107,14 +107,6 @@ Click to review without making another web request.
 
 Use the refresh button if you need to.
 
-## Whydunit
-
-Popular plugins are great indeed but power users do have very distinct requirements that even if being coded into functionality, seamlessly incorporating them while respecting the original design of the project proves to be a real challenge. This will also lead to a plugin ending up packed with a ton of features that require tons of time to maintain. It's also against my personal work philosophy which revolves around constructing a toolkit with tools that excel in single functions, as opposed to settling for compromises among multifunctional tools.
-
-You can't really expect volunteer developers to accommodate requirements they don't use or that might clash with their existing setups. That's why I took the initiative and wrote my own solution.
-
-I'm not a C# developer and I have only confirmed it works on my setup.
-
 ## Acknowledgement
 
-This project is heavily inspired by [MarketBoardPlugin](https://github.com/fmauNeko/MarketBoardPlugin), [PriceCheck](https://github.com/kalilistic/PriceCheck) and [SimpleTweaksPlugin](https://github.com/ottercorp/SimpleTweaksPlugin). Their developers had already put a considerable amount of effort into it, and I, who is not a C# developer, took advantage of several copy-pasting from the codebase of these projects. So, in a way, this project is built on the groundwork laid by its predecessors and I need to acknowledge this.
+This project is a fork of Elypha's Simple Market Board, who in itself was inspired by many different plugins you can find on their repo. I'm only further toying with the idea in the hopes that some of you might share my frustrations with the base functionality. 
