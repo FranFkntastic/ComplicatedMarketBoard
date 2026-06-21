@@ -47,6 +47,7 @@ In game, open `/xlsettings`, go to Experimental, add that URL under Custom Plugi
 2. Run `.\tools\Build-DalamudRelease.ps1`.
 3. Create a new GitHub Release.
 4. Upload the generated `latest.zip`.
-5. Copy the generated `dist\repo.json` entry into `FranFkntastic/DalamudPlugins` as part of the public `pluginmaster.json`.
+5. Run `.\tools\Update-DalamudPluginmaster.ps1`.
+6. Commit and push `FranFkntastic/DalamudPlugins`.
 
-Dalamud will use the `AssemblyVersion`, `DalamudApiLevel`, and download URLs from the generated `repo.json`.
+`Update-DalamudPluginmaster.ps1` copies the generated `dist\repo.json` entry into `FranFkntastic/DalamudPlugins\pluginmaster.json`, validates the manifest JSON, and checks that the versioned `latest.zip` URL is reachable. Dalamud will use the `AssemblyVersion`, `DalamudApiLevel`, and download URLs from `pluginmaster.json`.
