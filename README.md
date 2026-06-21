@@ -17,14 +17,14 @@ In game:
 3. Add this URL under `Custom Plugin Repositories`:
 
 ```text
-https://github.com/FranFkntastic/ComplicatedMarketBoard/releases/latest/download/repo.json
+https://raw.githubusercontent.com/FranFkntastic/DalamudPlugins/main/pluginmaster.json
 ```
 
 4. Save and close settings.
 5. Open `/xlplugins`.
 6. Search for `ComplicatedMarketBoard` and install it.
 
-Future updates will appear through Dalamud as long as the custom repository remains enabled. For release packaging details, see [docs/custom-plugin-repository.md](docs/custom-plugin-repository.md).
+Future updates, and any future FranFkntastic plugins published through the same repository, will appear through Dalamud as long as the custom repository remains enabled. For release packaging details, see [docs/custom-plugin-repository.md](docs/custom-plugin-repository.md).
 
 ### Features
 

@@ -3,9 +3,9 @@ param(
     [ValidateSet("Debug", "Release")]
     [string] $Configuration = "Release",
 
-    [string] $PackageUrl = "https://github.com/FranFkntastic/ComplicatedMarketBoard/releases/latest/download/latest.zip",
+    [string] $PackageUrl = "",
 
-    [string] $RepositoryUrl = "https://github.com/FranFkntastic/ComplicatedMarketBoard/releases/latest/download/repo.json",
+    [string] $RepositoryUrl = "https://raw.githubusercontent.com/FranFkntastic/DalamudPlugins/main/pluginmaster.json",
 
     [string] $OutputDirectory = "",
 
@@ -76,6 +76,11 @@ foreach ($fileName in $packageFiles) {
 Compress-Archive -Path (Join-Path $packageStaging "*") -DestinationPath $zipPath -Force
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+$releaseTag = "v$($manifest.AssemblyVersion)"
+if ([string]::IsNullOrWhiteSpace($PackageUrl)) {
+    $PackageUrl = "https://github.com/FranFkntastic/ComplicatedMarketBoard/releases/download/$releaseTag/latest.zip"
+}
+
 $lastUpdate = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()
 $rawBaseUrl = "https://raw.githubusercontent.com/FranFkntastic/ComplicatedMarketBoard/master"
 
@@ -108,11 +113,14 @@ $repoEntry = [ordered]@{
 }
 
 $repoEntryJson = $repoEntry | ConvertTo-Json -Depth 8
-"[$repoEntryJson]" | Set-Content -LiteralPath $repoJsonPath -Encoding UTF8
+$repoJson = "[$repoEntryJson]"
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+[System.IO.File]::WriteAllText($repoJsonPath, $repoJson, $utf8NoBom)
 
 Write-Host "Built Dalamud package:"
 Write-Host "  Zip:  $zipPath"
 Write-Host "  Repo: $repoJsonPath"
+Write-Host "  Package URL: $PackageUrl"
 Write-Host ""
-Write-Host "Upload both files to a GitHub Release, then add this custom repository URL in Dalamud:"
+Write-Host "Upload latest.zip to the GitHub Release tagged $releaseTag, then add this custom repository URL in Dalamud:"
 Write-Host "  $RepositoryUrl"
