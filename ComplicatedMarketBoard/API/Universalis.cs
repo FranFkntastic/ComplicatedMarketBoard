@@ -1,11 +1,11 @@
 using System.Net.Http.Json;
 using System.Net.Http;
 using System.Text.Json;
-using SimpleMarketBoard.Assets;
-using SimpleMarketBoard.Modules;
+using ComplicatedMarketBoard.Assets;
+using ComplicatedMarketBoard.Modules;
 
 
-namespace SimpleMarketBoard.API;
+namespace ComplicatedMarketBoard.API;
 
 public class Universalis
 {
@@ -34,7 +34,7 @@ public class Universalis
         {
             Timeout = TimeSpan.FromSeconds(P.Config.RequestTimeout),
         };
-        httpClient.DefaultRequestHeaders.Add("User-Agent", "SimpleMarketBoard/1.0 (Dalamud; FFXIV)");
+        httpClient.DefaultRequestHeaders.Add("User-Agent", "ComplicatedMarketBoard/1.0 (Dalamud; FFXIV)");
     }
 
 
@@ -50,7 +50,8 @@ public class Universalis
         {
             // build url
             var _hq = P.Config.UniversalisHqOnly ? "&hq=1" : "";
-            var API_URL = new UriBuilder($"{Host}/api/v2/{gameItem.TargetRegion}/{gameItem.Id}?listings={P.Config.UniversalisListings}&entries={P.Config.UniversalisEntries}{_hq}").Uri.ToString();
+            var targetRegion = gameItem.TargetRegion == "North America" ? "North-America" : gameItem.TargetRegion;
+            var API_URL = new UriBuilder($"{Host}/api/v2/{targetRegion}/{gameItem.Id}?listings={P.Config.UniversalisListings}&entries={P.Config.UniversalisEntries}{_hq}").Uri.ToString();
 
             // get response
             Service.Log.Info($"[Universalis] Fetch: {API_URL}");

@@ -1,0 +1,85 @@
+using Dalamud.Game.ClientState.Keys;
+using Dalamud.Game.Text;
+using Miosuke.Configuration;
+using ComplicatedMarketBoard.Modules;
+
+
+namespace ComplicatedMarketBoard.Configuration;
+
+public class ComplicatedMarketBoardConfig : IMioConfig
+{
+    public int Version = 1;
+
+
+    // -------------------------------- General --------------------------------
+    // search
+    public int HoverDelayMs = 0;
+    public bool SearchHotkeyEnabled = true;
+    public VirtualKey[] SearchHotkey = [VirtualKey.TAB];
+    public bool SearchHotkeyLoose = true;
+    public bool SearchHotkeyCanHide = true;
+    public bool ShowWindowOnSearch = true;
+    public bool HoverBackgroundSearchEnabled = true;
+    public bool HotkeyBackgroundSearchEnabled = true;
+
+    // data window
+    public bool WindowHotkeyEnabled = false;
+    public VirtualKey[] WindowHotkey = [VirtualKey.CONTROL, VirtualKey.X];
+    public bool WindowHotkeyCanShow = true;
+    public bool WindowHotkeyCanHide = true;
+
+    // worlds
+    public bool OverridePlayerHomeWorld = false;
+    public string PlayerHomeWorld = "";
+    public List<string> AdditionalWorlds = new List<string>();
+
+    // notification
+    public PriceChecker.PriceToPrint priceToPrint = PriceChecker.PriceToPrint.SoldLow;
+    public bool EnableChatLog = true;
+    public XivChatType ChatLogChannel = XivChatType.Debug;
+    public bool EnableToastLog = false;
+
+
+    // -------------------------------- Data --------------------------------
+    public bool TotalIncludeTax = true;
+    public bool MarkHigherThanVendor = true;
+
+    // cache
+    public int MaxCacheItems = 30;
+    public bool CleanCacheASAP = true;
+
+    // universalis
+    public int RequestTimeout = 20;
+    public int UniversalisListings = 70;
+    public int UniversalisEntries = 70;
+
+
+    // -------------------------------- UI --------------------------------
+    public bool EnableTheme = true;
+    public string CustomTheme = "";
+    public bool NumbersAlignRight = true;
+    public float NumbersAlignRightOffset = -4.0f;
+    public bool EnableRecentHistory = true;
+    public int soldTableOffset = 25;
+    public float spaceBetweenTables = 0;
+
+    // position offset
+    public float WorldComboWidth = 130.0f;
+    public float tableRowHeightOffset = -2.0f;
+    public float[] sellingColWidthOffset = [0.0f, 0.0f, 0.0f, 0.0f, 0.0f];
+    public float[] soldColWidthOffset = [0.0f, 0.0f, 0.0f, 0.0f, 0.0f];
+    public int rightColWidth = 102;
+    public float WorldUpdateTableHeight = 210.0f;
+    public float[] WorldUpdateColWidthOffset = [4.0f, 0.0f];
+    public float[] WorldUpdateColPaddingOffset = [-2.0f, -2.0f];
+    public float[] ButtonSizeOffset = [24.0f, 0.0f];
+
+
+    // -------------------------------- Internal --------------------------------
+    // HQ filter
+    public bool FilterHq = false;
+    public bool UniversalisHqOnly = false;
+    // world
+    public string selectedWorld = "";
+
+}
