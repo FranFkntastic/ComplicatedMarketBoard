@@ -32,6 +32,7 @@ public class ComplicatedMarketBoardConfig : IMioConfig
     public bool OverridePlayerHomeWorld = false;
     public string PlayerHomeWorld = "";
     public List<string> AdditionalWorlds = new List<string>();
+    public List<CustomMarketScope> CustomMarketScopes = new List<CustomMarketScope>();
 
     // notification
     public PriceChecker.PriceToPrint priceToPrint = PriceChecker.PriceToPrint.SoldLow;
@@ -65,6 +66,7 @@ public class ComplicatedMarketBoardConfig : IMioConfig
 
     // position offset
     public float WorldComboWidth = 130.0f;
+    public float WorldComboPopupHeight = 420.0f;
     public float tableRowHeightOffset = -2.0f;
     public float[] sellingColWidthOffset = [0.0f, 0.0f, 0.0f, 0.0f, 0.0f];
     public float[] soldColWidthOffset = [0.0f, 0.0f, 0.0f, 0.0f, 0.0f];
@@ -81,5 +83,6 @@ public class ComplicatedMarketBoardConfig : IMioConfig
     public bool UniversalisHqOnly = false;
     // world
     public string selectedWorld = "";
+    public string selectedCustomScopeId = "";
 
 }

@@ -23,6 +23,11 @@ public class UniversalisResponse
     public ulong Status { get; set; }
 
     /// <summary>
+    /// User-facing market scope label represented by this response.
+    /// </summary>
+    public string ScopeName { get; set; } = "";
+
+    /// <summary>
     /// Gets or sets the ID of the item.
     /// </summary>
     [JsonPropertyName("itemID")]
@@ -36,7 +41,22 @@ public class UniversalisResponse
     /// <summary>
     /// An edited entry to get how many hours have passed since last update for each world.
     /// </summary>
-    public Dictionary<string, long> WorldOutOfDate { get; set; } = [];
+    public Dictionary<string, double> WorldOutOfDate { get; set; } = [];
+
+    /// <summary>
+    /// Unix time in milliseconds when this response was fetched.
+    /// </summary>
+    public long FetchTime { get; set; }
+
+    /// <summary>
+    /// Unix time in milliseconds of the newest upload represented by this response.
+    /// </summary>
+    public long LatestUploadTime { get; set; }
+
+    /// <summary>
+    /// Unix upload times in milliseconds for each world or selected market scope.
+    /// </summary>
+    public Dictionary<string, long> WorldUploadTimes { get; set; } = [];
 
     /// <summary>
     /// Gets the total amount of items currently for sale.

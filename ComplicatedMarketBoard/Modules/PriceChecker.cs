@@ -34,7 +34,7 @@ public class PriceChecker
         public Item InGame { get; set; }
         public ulong FetchTimestamp { get; set; }
         public UniversalisResponse UniversalisResponse { get; set; } = new UniversalisResponse();
-        public Dictionary<string, long> WorldOutOfDate { get; set; } = [];
+        public Dictionary<string, double> WorldOutOfDate { get; set; } = [];
         public double AvgPrice { get; set; }
     }
 
@@ -55,6 +55,7 @@ public class PriceChecker
             {
                 Service.Log.Error($"[PriceChecker] CheckNewAsync failed, {ex.Message}");
                 P.MainWindow.CurrentItemLabel = "Error";
+                P.MainWindow.FailMarketDataRefresh(ex.Message);
             }
             finally
             {
@@ -131,6 +132,7 @@ public class PriceChecker
             {
                 Service.Log.Error($"[PriceChecker] CheckRefreshAsync failed, {ex.Message}");
                 P.MainWindow.CurrentItemLabel = "Error";
+                P.MainWindow.FailMarketDataRefresh(ex.Message);
             }
             finally
             {
@@ -145,11 +147,16 @@ public class PriceChecker
         // lookup market data
         P.MainWindow.CurrentItemLabel = gameItem.Name;
         P.MainWindow.CurrentItemIcon = Service.Texture.GetFromGameIcon(new GameIconLookup(gameItem.InGame.Icon))!;
-        gameItem.TargetRegion = P.Config.selectedWorld;
+        gameItem.TargetRegion = P.MainWindow.GetSelectedMarketScopeLabel();
         gameItem.FetchTimestamp = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        P.MainWindow.BeginMarketDataRefresh(gameItem.Name);
+        P.MainWindow.UpdateMarketDataRefresh($"Fetching Universalis data for {gameItem.Name}", 0.35f);
         var UniversalisResponse = P.Universalis.GetDataAsync(gameItem).Result;
+        P.MainWindow.UpdateMarketDataRefresh($"Processing market data for {gameItem.Name}", 0.75f);
 
         // validate
+        gameItem.UniversalisResponse = UniversalisResponse;
+
         if (UniversalisResponse.Status == UniversalisResponseStatus.ServerError)
         {
             Service.NotificationManager.AddNotification(new Notification
@@ -184,7 +191,6 @@ public class PriceChecker
         }
         else
         {
-            gameItem.UniversalisResponse = UniversalisResponse;
             gameItem.WorldOutOfDate = gameItem.UniversalisResponse.WorldOutOfDate;
 
             // add avg price
@@ -201,8 +207,20 @@ public class PriceChecker
         // inset into search history
         SearchHistoryUpdate(gameItem);
 
-        P.MainWindow.LoadingQueue -= 1;
+        if (UniversalisResponse.Status == UniversalisResponseStatus.Success)
+            P.MainWindow.CompleteMarketDataRefresh(gameItem.Name);
+        else
+            P.MainWindow.FailMarketDataRefresh(GetUniversalisStatusLabel(UniversalisResponse.Status));
     }
+
+    private static string GetUniversalisStatusLabel(ulong status) => status switch
+    {
+        UniversalisResponseStatus.ServerError => "server error",
+        UniversalisResponseStatus.InvalidData => "invalid data",
+        UniversalisResponseStatus.UserCancellation => "request timed out",
+        UniversalisResponseStatus.UnknownError => "unknown error",
+        _ => $"status {status}",
+    };
 
 
     // -------------------------------- search history --------------------------------

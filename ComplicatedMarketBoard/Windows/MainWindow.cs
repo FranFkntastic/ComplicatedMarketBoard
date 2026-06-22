@@ -25,6 +25,13 @@ public class MainWindow : Window, IDisposable
     private const float ResizeHandleWidth = 4.0f;
     private const float MinimumTableHeight = 60.0f;
     private const int MinimumRightPanelWidth = 80;
+    private const int SearchResultLimit = 20;
+    private static readonly List<ItemSearchResult> SearchableItems = Data.ItemSheet
+        .Where(item => item.RowId > 0 && item.ItemSearchCategory.RowId != 0)
+        .Select(item => new ItemSearchResult(item.RowId, item.Name.ToString()))
+        .Where(item => !string.IsNullOrWhiteSpace(item.Name))
+        .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+        .ToList();
 
     public MainWindow() : base(
         "ComplicatedMarketBoard",
@@ -38,7 +45,7 @@ public class MainWindow : Window, IDisposable
         CurrentItem.InGame = Data.ItemSheet.GetRow(4691)!;
         CurrentItemLabel = "(/ω＼)";
         CurrentItemIcon = Service.Texture.GetFromGameIcon(new GameIconLookup(CurrentItem.InGame.Icon));
-        if (P.Config.selectedWorld != "") lastSelectedWorld = P.Config.selectedWorld;
+        if (P.Config.selectedCustomScopeId != "" || P.Config.selectedWorld != "") lastSelectedWorld = GetSelectedMarketScopeLabel();
     }
 
     public override void PreDraw()
@@ -93,6 +100,10 @@ public class MainWindow : Window, IDisposable
 
     private int selectedListing = -1;
     private int selectedHistory = -1;
+    private string itemSearchText = "";
+    private string lastItemSearchText = "";
+    private List<ItemSearchResult> itemSearchResults = [];
+    private bool itemSearchOpen;
 
     private ListingSortColumn listingSortColumn = ListingSortColumn.Selling;
     private bool listingSortDescending;
@@ -100,8 +111,15 @@ public class MainWindow : Window, IDisposable
     private bool historySortDescending = true;
 
     public int LoadingQueue = 0;
+    public bool RefreshInProgress { get; private set; }
+    public string RefreshStatusText { get; private set; } = "Market data idle";
+    public long RefreshStartedAt { get; private set; }
+    public long RefreshCompletedAt { get; private set; }
+    public float RefreshProgress { get; private set; }
+    public string RefreshErrorText { get; private set; } = "";
 
-    public List<(string, string)> worldList = [];
+    public MarketScopeCatalog ScopeCatalog { get; } = new();
+    public List<MarketScopeSelectorRow> worldList = [];
     public string playerHomeWorld = "";
 
     private enum ListingSortColumn
@@ -120,6 +138,42 @@ public class MainWindow : Window, IDisposable
         Date,
         World,
         Buyer,
+    }
+
+    private sealed record ItemSearchResult(uint Id, string Name);
+
+    public void BeginMarketDataRefresh(string itemName)
+    {
+        RefreshInProgress = true;
+        RefreshStartedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        RefreshCompletedAt = 0;
+        RefreshProgress = 0.10f;
+        RefreshErrorText = "";
+        RefreshStatusText = $"Preparing market request for {itemName}";
+    }
+
+    public void UpdateMarketDataRefresh(string statusText, float progress)
+    {
+        RefreshStatusText = statusText;
+        RefreshProgress = Math.Clamp(progress, 0.0f, 0.95f);
+    }
+
+    public void CompleteMarketDataRefresh(string itemName)
+    {
+        RefreshInProgress = false;
+        RefreshCompletedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        RefreshProgress = 1.0f;
+        RefreshErrorText = "";
+        RefreshStatusText = $"Market data refreshed for {itemName}";
+    }
+
+    public void FailMarketDataRefresh(string errorText)
+    {
+        RefreshInProgress = false;
+        RefreshCompletedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        RefreshProgress = 1.0f;
+        RefreshErrorText = errorText;
+        RefreshStatusText = $"Market refresh failed: {errorText}";
     }
 
 
@@ -176,6 +230,8 @@ public class MainWindow : Window, IDisposable
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() + ImGui.GetContentRegionAvail().X - P.Config.WorldComboWidth);
         DrawWorldCombo(P.Config.WorldComboWidth);
 
+        DrawItemSearchBar(spacing);
+        DrawMarketDataStatusBar(spacing);
 
         // price table
         if (CurrentItem.Id > 0)
@@ -256,37 +312,6 @@ public class MainWindow : Window, IDisposable
         ImGui.EndGroup();
     }
 
-    private static readonly List<string> PublicRegions = [
-        "Japan",
-        "North-America",
-        "Europe",
-        "Oceania"
-    ];
-    private static readonly List<string> PublicDataCentres = [
-        // North American Data Center
-        "Aether", "Crystal", "Dynamis", "Primal",
-        // European Data Center
-        "Chaos", "Light",
-        // Oceanian Data Center
-        "Materia",
-        // Japanese Data Center
-        "Elemental", "Gaia", "Mana", "Meteor"
-    ];
-    private static readonly List<string> PublicWorlds = Service.Data.GetExcelSheet<World>().Where(x => x.IsPublic).Select(x => x.Name.ToString()).ToList();
-
-
-    // NOTE: potential dead code
-    private static string getRegionStr(int region) => region switch
-    {
-        1 => "Japan",
-        2 => "North-America",
-        3 => "Europe",
-        4 => "Oceania",
-        _ => "",
-    };
-
-
-
     public void UpdateWorld()
     {
         if (!P.IsInGame) return;
@@ -325,40 +350,109 @@ public class MainWindow : Window, IDisposable
 
     private void updateWorldList(string region, string dataCentre, string homeWorld, List<string> worldsInDc)
     {
-        var additionalWorlds = P.Config.AdditionalWorlds.ToList();
+        var changed = ScopeCatalog.CanonicalizeConfigList(P.Config.AdditionalWorlds);
+        foreach (var customScope in P.Config.CustomMarketScopes)
+            changed |= ScopeCatalog.CanonicalizeConfigList(customScope.IncludedScopes);
+        if (changed)
+            P.Config.Save();
+
+        var additionalWorlds = P.Config.AdditionalWorlds.ToHashSet(StringComparer.OrdinalIgnoreCase);
         worldList.Clear();
 
-        string suffix;
+        var visibleRegions = new SortedSet<string>(StringComparer.OrdinalIgnoreCase) { region };
+        var visibleDataCenters = new SortedSet<string>(StringComparer.OrdinalIgnoreCase) { dataCentre };
+        var dataCentersExpandedByRegion = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // add region
-        suffix = additionalWorlds.Contains(region) ? "*" : "";
-        worldList.Add((region, $"{(char)SeIconChar.ExperienceFilled}  {region}{suffix}"));
-        worldList.AddRange(additionalWorlds
-            .Where(x => PublicRegions.Contains(x) && !string.Equals(x, region, StringComparison.OrdinalIgnoreCase))
-            .Select(x => (x, $"{(char)SeIconChar.ExperienceFilled}  {x}*"))
-        );
-        // data centres
-        suffix = additionalWorlds.Contains(dataCentre) ? "*" : "";
-        worldList.Add((dataCentre, $"{(char)SeIconChar.Experience}  {dataCentre}{suffix}"));
-        worldList.AddRange(additionalWorlds
-            .Where(x => PublicDataCentres.Contains(x) && !string.Equals(x, dataCentre, StringComparison.OrdinalIgnoreCase))
-            .Select(x => (x, $"{(char)SeIconChar.Experience}  {x}*"))
-        );
-        // home world
-        suffix = additionalWorlds.Contains(homeWorld) ? "*" : "";
-        worldList.Add((homeWorld, $"{homeWorld}{suffix}"));
-        // additional worlds
-        worldList.AddRange(additionalWorlds
-            .Where(x => PublicWorlds.Contains(x) && !string.Equals(x, homeWorld, StringComparison.OrdinalIgnoreCase))
-            .Select(x => (x, $"{x}*"))
-        );
-        worldList.AddRange(worldsInDc
-            .Where(x => !additionalWorlds.Contains(x))
-            .Select(x => (x, $"{x}"))
-        );
+        foreach (var additionalScope in additionalWorlds)
+        {
+            if (!ScopeCatalog.TryGetScope(additionalScope, out var scope))
+                continue;
+
+            if (scope.Kind == MarketScopeKind.Region)
+            {
+                visibleRegions.Add(scope.Name);
+                if (ScopeCatalog.DataCentersByRegion.TryGetValue(scope.Name, out var dataCenters))
+                    foreach (var regionDataCenter in dataCenters)
+                    {
+                        visibleDataCenters.Add(regionDataCenter);
+                        dataCentersExpandedByRegion.Add(regionDataCenter);
+                    }
+            }
+            else if (scope.Kind == MarketScopeKind.DataCenter)
+            {
+                visibleRegions.Add(scope.RegionName);
+                visibleDataCenters.Add(scope.Name);
+            }
+            else if (scope.Kind == MarketScopeKind.World)
+            {
+                visibleRegions.Add(scope.RegionName);
+                visibleDataCenters.Add(scope.DataCenterName);
+            }
+        }
+
+        worldList.Add(new MarketScopeSelectorRow("regions", "Regions", MarketScopeKind.Header, 0));
+        foreach (var visibleRegion in visibleRegions.OrderBy(item => item, StringComparer.OrdinalIgnoreCase))
+            worldList.Add(new MarketScopeSelectorRow(
+                visibleRegion,
+                visibleRegion,
+                MarketScopeKind.Region,
+                1,
+                additionalWorlds.Contains(visibleRegion)));
+
+        worldList.Add(new MarketScopeSelectorRow("data-centers", "Data Centers", MarketScopeKind.Header, 0));
+        foreach (var visibleRegion in visibleRegions.OrderBy(item => item, StringComparer.OrdinalIgnoreCase))
+        {
+            if (!ScopeCatalog.DataCentersByRegion.TryGetValue(visibleRegion, out var dataCenters))
+                continue;
+
+            foreach (var visibleDataCenter in dataCenters.Where(visibleDataCenters.Contains).OrderBy(item => item, StringComparer.OrdinalIgnoreCase))
+            {
+                worldList.Add(new MarketScopeSelectorRow(
+                    visibleDataCenter,
+                    visibleDataCenter,
+                    MarketScopeKind.DataCenter,
+                    1,
+                    additionalWorlds.Contains(visibleDataCenter)));
+
+                var worldsInDataCenter = ScopeCatalog.GetWorldsInDataCenter(visibleDataCenter).ToList();
+                var hasExplicitWorldsInDataCenter = worldsInDataCenter.Any(world => additionalWorlds.Contains(world.Name));
+                var showAllWorlds = string.Equals(visibleDataCenter, dataCentre, StringComparison.OrdinalIgnoreCase)
+                                    || dataCentersExpandedByRegion.Contains(visibleDataCenter)
+                                    || additionalWorlds.Contains(visibleDataCenter) && !hasExplicitWorldsInDataCenter;
+                var worldsToShow = worldsInDataCenter.Where(world => showAllWorlds || additionalWorlds.Contains(world.Name));
+
+                foreach (var world in worldsToShow)
+                {
+                    worldList.Add(new MarketScopeSelectorRow(
+                        world.Name,
+                        world.DisplayName,
+                        MarketScopeKind.World,
+                        2,
+                        additionalWorlds.Contains(world.Name),
+                        string.Equals(world.Name, homeWorld, StringComparison.OrdinalIgnoreCase)));
+                }
+            }
+        }
+
+        if (P.Config.CustomMarketScopes.Count > 0)
+        {
+            worldList.Add(new MarketScopeSelectorRow("custom-scopes", "Custom Scopes", MarketScopeKind.Header, 0));
+            foreach (var customScope in P.Config.CustomMarketScopes.OrderBy(scope => scope.Name, StringComparer.OrdinalIgnoreCase))
+            {
+                var displayName = string.IsNullOrWhiteSpace(customScope.Name) ? "Unnamed custom scope" : customScope.Name;
+                worldList.Add(new MarketScopeSelectorRow(
+                    customScope.Id,
+                    displayName,
+                    MarketScopeKind.Custom,
+                    1,
+                    false,
+                    false,
+                    customScope.Id));
+            }
+        }
 
         playerHomeWorld = homeWorld;
-        if (P.Config.selectedWorld == "")
+        if (P.Config.selectedWorld == "" && P.Config.selectedCustomScopeId == "")
         {
             P.Config.selectedWorld = dataCentre;
         }
@@ -473,26 +567,49 @@ public class MainWindow : Window, IDisposable
         {
             Data.NotoSans17.Pop();
         }
-        ImGui.SetNextItemWidth(width);
-        if (ImGui.BeginCombo($"###{Name}selectedWorld", P.Config.selectedWorld))
-        {
-            foreach (var world in worldList)
-            {
-                if (world.Item1 == playerHomeWorld) ImGui.PushStyleColor(ImGuiCol.Text, Ui.ColourHq);
 
-                var isSelected = world.Item1 == P.Config.selectedWorld;
-                if (ImGui.Selectable(world.Item2, isSelected))
+        ImGui.SetNextItemWidth(width);
+        ImGui.SetNextWindowSizeConstraints(
+            new Vector2(width, ImGui.GetTextLineHeightWithSpacing() * 4),
+            new Vector2(Math.Max(width, P.Config.WorldComboWidth), Math.Max(120.0f, P.Config.WorldComboPopupHeight)));
+        if (ImGui.BeginCombo($"###{Name}selectedWorld", GetSelectedMarketScopeLabel()))
+        {
+            foreach (var scope in worldList)
+            {
+                if (scope.Kind == MarketScopeKind.Header)
                 {
-                    P.Config.selectedWorld = world.Item1;
+                    ImGui.TextColored(Ui.ColourCyan, scope.DisplayName);
+                    continue;
+                }
+
+                if (scope.IsHomeWorld) ImGui.PushStyleColor(ImGuiCol.Text, Ui.ColourHq);
+
+                var label = $"{new string(' ', scope.Indent * 2)}{GetScopeIcon(scope.Kind)}  {scope.DisplayName}{(scope.IsAdditional ? "*" : "")}";
+                var isSelected = scope.Kind == MarketScopeKind.Custom
+                    ? scope.CustomScopeId == P.Config.selectedCustomScopeId
+                    : P.Config.selectedCustomScopeId == "" && scope.Name == P.Config.selectedWorld;
+
+                if (ImGui.Selectable(label, isSelected))
+                {
+                    if (scope.Kind == MarketScopeKind.Custom)
+                    {
+                        P.Config.selectedCustomScopeId = scope.CustomScopeId;
+                    }
+                    else
+                    {
+                        P.Config.selectedWorld = scope.Name;
+                        P.Config.selectedCustomScopeId = "";
+                    }
+
                     P.Config.Save();
 
-                    if (P.Config.selectedWorld != lastSelectedWorld)
+                    if (GetSelectedMarketScopeLabel() != lastSelectedWorld)
                     {
-                        Service.Log.Debug($"Fetch data of {P.Config.selectedWorld}");
+                        Service.Log.Debug($"Fetch data of {GetSelectedMarketScopeLabel()}");
                         P.PriceChecker.DoCheckRefreshAsync(CurrentItem);
                     }
 
-                    lastSelectedWorld = P.Config.selectedWorld;
+                    lastSelectedWorld = GetSelectedMarketScopeLabel();
                 }
 
                 if (isSelected)
@@ -500,15 +617,132 @@ public class MainWindow : Window, IDisposable
                     ImGui.SetItemDefaultFocus();
                 }
 
-                if (world.Item1 == playerHomeWorld) ImGui.PopStyleColor();
+                if (scope.IsHomeWorld) ImGui.PopStyleColor();
             }
 
             ImGui.EndCombo();
         }
+
         if (P.PluginThemeEnabled)
         {
             Data.NotoSans17.Push();
         }
+    }
+
+    public string GetSelectedMarketScopeLabel()
+    {
+        if (P.Config.selectedCustomScopeId != "")
+        {
+            var customScope = P.Config.CustomMarketScopes.FirstOrDefault(scope => scope.Id == P.Config.selectedCustomScopeId);
+            if (customScope is not null)
+                return string.IsNullOrWhiteSpace(customScope.Name) ? "Unnamed custom scope" : customScope.Name;
+        }
+
+        return P.Config.selectedWorld;
+    }
+
+    private static string GetScopeIcon(MarketScopeKind kind) => kind switch
+    {
+        MarketScopeKind.Region => $"{(char)SeIconChar.ExperienceFilled}",
+        MarketScopeKind.DataCenter => $"{(char)SeIconChar.Experience}",
+        MarketScopeKind.Custom => $"{(char)FontAwesomeIcon.LayerGroup}",
+        _ => "",
+    };
+
+    private void DrawItemSearchBar(Vector2 spacing)
+    {
+        ImGui.SetCursorPosX(0);
+        ImGui.Spacing();
+
+        var inputWidth = Math.Max(120.0f, ImGui.GetContentRegionAvail().X - P.Config.ButtonSizeOffset[0] - spacing.X);
+        ImGui.SetNextItemWidth(inputWidth);
+        if (ImGui.InputText($"###{Name}itemSearch", ref itemSearchText, 96, ImGuiInputTextFlags.EnterReturnsTrue))
+        {
+            RefreshItemSearchResults();
+            if (itemSearchResults.Count > 0)
+                SearchItem(itemSearchResults[0]);
+        }
+
+        if (ImGui.IsItemActivated())
+            itemSearchOpen = true;
+
+        if (ImGui.IsItemEdited())
+        {
+            RefreshItemSearchResults();
+            itemSearchOpen = !string.IsNullOrWhiteSpace(itemSearchText);
+        }
+
+        if (string.IsNullOrWhiteSpace(itemSearchText) && !ImGui.IsItemActive())
+        {
+            var min = ImGui.GetItemRectMin();
+            ImGui.GetWindowDrawList().AddText(
+                new Vector2(min.X + 5.0f, min.Y + 2.0f),
+                ImGui.GetColorU32(Ui.ColourWhite4),
+                "Search marketable items...");
+        }
+
+        ImGui.SameLine();
+        ImGui.PushFont(UiBuilder.IconFont);
+        if (ImGui.Button($"{(char)FontAwesomeIcon.Times}", new Vector2(P.Config.ButtonSizeOffset[0], ImGui.GetItemRectSize().Y)))
+        {
+            itemSearchText = "";
+            itemSearchResults.Clear();
+            itemSearchOpen = false;
+        }
+        ImGui.PopFont();
+
+        if (!itemSearchOpen || itemSearchResults.Count == 0)
+            return;
+
+        var resultHeight = Math.Min(itemSearchResults.Count, 8) * ImGui.GetTextLineHeightWithSpacing() + spacing.Y;
+        ImGui.SetCursorPosX(0);
+        ImGui.BeginChild(
+            "item search results",
+            new Vector2(0, resultHeight),
+            true,
+            ImGuiWindowFlags.None);
+
+        ItemSearchResult? selectedResult = null;
+        foreach (var result in itemSearchResults)
+        {
+            if (ImGui.Selectable($"{result.Name} [{result.Id}]##search{result.Id}", (uint)CurrentItem.Id == result.Id))
+                selectedResult = result;
+        }
+
+        ImGui.EndChild();
+
+        if (selectedResult is not null)
+            SearchItem(selectedResult);
+    }
+
+    private void RefreshItemSearchResults()
+    {
+        var query = itemSearchText.Trim();
+        if (query == lastItemSearchText)
+            return;
+
+        lastItemSearchText = query;
+        itemSearchResults.Clear();
+
+        if (query.Length == 0)
+            return;
+
+        itemSearchResults = SearchableItems
+            .Where(item => item.Name.Contains(query, StringComparison.OrdinalIgnoreCase) || item.Id.ToString(CultureInfo.InvariantCulture) == query)
+            .OrderBy(item => item.Name.StartsWith(query, StringComparison.OrdinalIgnoreCase) ? 0 : 1)
+            .ThenBy(item => item.Name.Length)
+            .ThenBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .Take(SearchResultLimit)
+            .ToList();
+    }
+
+    private void SearchItem(ItemSearchResult result)
+    {
+        itemSearchText = result.Name;
+        lastItemSearchText = result.Name;
+        itemSearchOpen = false;
+        itemSearchResults.Clear();
+        P.PriceChecker.DoCheckAsync(result.Id);
     }
 
     private void DrawPriceTables(float availableHeight)
@@ -961,6 +1195,143 @@ public class MainWindow : Window, IDisposable
         ImGui.PopFont();
     }
 
+    private void DrawMarketDataStatusBar(Vector2 spacing)
+    {
+        if (CurrentItem.Id == 0)
+            return;
+
+        ImGui.Spacing();
+        ImGui.BeginChild(
+            "market data refresh status",
+            new Vector2(0, ImGui.GetTextLineHeightWithSpacing() + spacing.Y),
+            true,
+            ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 0.2f * spacing.Y);
+
+        if (RefreshInProgress)
+        {
+            var elapsed = FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - RefreshStartedAt);
+            ImGui.ProgressBar(
+                RefreshProgress,
+                new Vector2(-1, ImGui.GetTextLineHeightWithSpacing()),
+                $"{RefreshStatusText}... {elapsed}");
+        }
+        else
+        {
+            ImGui.TextColored(GetMarketRefreshStatusColour(), GetMarketRefreshStatusText());
+        }
+
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(GetMarketDataStatusTooltip());
+        ImGui.EndChild();
+    }
+
+    private Vector4 GetMarketRefreshStatusColour()
+    {
+        var response = CurrentItem.UniversalisResponse;
+        if (response.Status != UniversalisResponseStatus.Success)
+            return Ui.ColourCrimson;
+
+        if (response.FetchTime == 0)
+            return Ui.ColourWhite3;
+
+        return Ui.ColourCyan;
+    }
+
+    private string GetMarketRefreshStatusText()
+    {
+        var response = CurrentItem.UniversalisResponse;
+        if (response.Status != UniversalisResponseStatus.Success)
+            return $"Market refresh failed: {GetUniversalisStatusLabel(response.Status)}";
+
+        if (response.FetchTime == 0)
+            return "Market data not loaded";
+
+        var fetchedAgo = FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - response.FetchTime);
+        return $"Market data refreshed {fetchedAgo} ago";
+    }
+
+    private string GetMarketDataStatusTooltip()
+    {
+        var response = CurrentItem.UniversalisResponse;
+        if (RefreshInProgress)
+        {
+            var elapsed = RefreshStartedAt > 0
+                ? FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - RefreshStartedAt)
+                : "unknown";
+
+            if (response.WorldOutOfDate.Count == 0)
+                return $"{RefreshStatusText}\nElapsed: {elapsed}";
+
+            return $"{RefreshStatusText}\nElapsed: {elapsed}\n\n{GetMarketFreshnessTooltip()}";
+        }
+
+        if (response.Status != UniversalisResponseStatus.Success)
+            return $"Universalis status: {GetUniversalisStatusLabel(response.Status)}.";
+
+        if (response.WorldOutOfDate.Count == 0)
+            return "No freshness data was returned for this item.";
+
+        return GetMarketFreshnessTooltip();
+    }
+
+    private string GetMarketFreshnessTooltip()
+    {
+        var response = CurrentItem.UniversalisResponse;
+        var freshness = response.WorldOutOfDate.OrderByDescending(w => w.Value).ToList();
+        var newest = freshness.MinBy(w => w.Value);
+        var oldest = freshness.MaxBy(w => w.Value);
+        var min = freshness.Min(w => w.Value);
+        var avg = freshness.Average(w => w.Value);
+        var max = freshness.Max(w => w.Value);
+        var fetchedAt = response.FetchTime > 0
+            ? FormatTimestamp(response.FetchTime)
+            : "unknown";
+        var newestUpload = response.LatestUploadTime > 0
+            ? FormatTimestamp(response.LatestUploadTime)
+            : "unknown";
+
+        return
+            $"Fetched: {fetchedAt}\n" +
+            $"Newest upload: {newestUpload}\n" +
+            $"Freshness: {min:F2} / {avg:F2} / {max:F2} hrs min/avg/max\n" +
+            $"Freshest market: {newest.Key} ({newest.Value:F2} hrs)\n" +
+            $"Stalest market: {oldest.Key} ({oldest.Value:F2} hrs)\n" +
+            $"Worlds: {response.WorldOutOfDate.Count}\n" +
+            $"Listings: {response.Listings.Count}\n" +
+            $"Recent sales: {response.Entries.Count}";
+    }
+
+    private static string GetUniversalisStatusLabel(ulong status) => status switch
+    {
+        UniversalisResponseStatus.Success => "ok",
+        UniversalisResponseStatus.ServerError => "server error",
+        UniversalisResponseStatus.InvalidData => "invalid data",
+        UniversalisResponseStatus.UserCancellation => "request timed out",
+        UniversalisResponseStatus.UnknownError => "unknown error",
+        _ => $"status {status}",
+    };
+
+    private static string FormatDuration(long milliseconds)
+    {
+        if (milliseconds < 0)
+            milliseconds = 0;
+
+        var duration = TimeSpan.FromMilliseconds(milliseconds);
+        if (duration.TotalMinutes < 1)
+            return $"{duration.TotalSeconds:F1}s";
+        if (duration.TotalHours < 1)
+            return $"{duration.TotalMinutes:F1}m";
+        if (duration.TotalDays < 1)
+            return $"{duration.TotalHours:F2}h";
+        return $"{duration.TotalDays:F2}d";
+    }
+
+    private static string FormatTimestamp(long unixMilliseconds)
+        => DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds)
+            .ToLocalTime()
+            .ToString("yyyy-MM-dd HH:mm:ss.fff zzz", CultureInfo.InvariantCulture);
+
     private void DrawWorldOutdated(Vector2 spacing, float rightColTableWidth)
     {
         if (ImGui.BeginTable(
@@ -987,8 +1358,8 @@ public class MainWindow : Window, IDisposable
                 ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.WorldUpdateColPaddingOffset[0]);
                 ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 0.5f * spacing.Y);
 
-                Ui.AlignRight($"{(int)i.Value}");
-                ImGui.Text($"{(int)i.Value}");
+                Ui.AlignRight($"{i.Value:F2}");
+                ImGui.Text($"{i.Value:F2}");
                 ImGui.TableNextColumn();
 
                 ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 0.5f * spacing.Y);
