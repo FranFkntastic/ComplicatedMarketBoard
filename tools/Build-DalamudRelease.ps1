@@ -73,6 +73,20 @@ foreach ($fileName in $packageFiles) {
     Copy-Item -LiteralPath $sourcePath -Destination $packageStaging
 }
 
+$noticeFiles = @(
+    "LICENSE",
+    "NOTICE.md"
+)
+
+foreach ($fileName in $noticeFiles) {
+    $sourcePath = Join-Path $repoRoot $fileName
+    if (-not (Test-Path $sourcePath)) {
+        throw "Expected notice file was not found: $sourcePath"
+    }
+
+    Copy-Item -LiteralPath $sourcePath -Destination $packageStaging
+}
+
 Compress-Archive -Path (Join-Path $packageStaging "*") -DestinationPath $zipPath -Force
 
 $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json

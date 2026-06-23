@@ -51,3 +51,7 @@ Use the world menu to choose where market data should come from. Additional worl
 ComplicatedMarketBoard uses public Universalis market data, so results depend on public upload freshness.
 
 This plugin is a fork of Elypha's Simple Market Board.
+
+## License
+
+ComplicatedMarketBoard is licensed under GPL-3.0-or-later. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md).

@@ -17,7 +17,7 @@ dist\latest.zip
 dist\repo.json
 ```
 
-`latest.zip` contains the plugin DLL, generated Dalamud manifest, dependency manifest, XML docs, and the bundled `Miosuke` helper DLL. `repo.json` is a single-plugin repository manifest entry that can be copied into the general plugin repository.
+`latest.zip` contains the plugin DLL, generated Dalamud manifest, dependency manifest, XML docs, the bundled `Miosuke` helper DLL, and the license/notice files. `repo.json` is a single-plugin repository manifest entry that can be copied into the general plugin repository.
 
 ## Publish
 
