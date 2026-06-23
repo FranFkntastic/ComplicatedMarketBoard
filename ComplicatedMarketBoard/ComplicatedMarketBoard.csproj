@@ -3,7 +3,7 @@
 
   <PropertyGroup>
     <Title>ComplicatedMarketBoard</Title>
-    <Description>A less simple market board plugin for power users.</Description>
+    <Description>A compact Dalamud market board helper for FFXIV.</Description>
     <Authors>FranFkntastic</Authors>
     <Copyright>FranFkntastic</Copyright>
     <Version>1.13.0.0</Version>

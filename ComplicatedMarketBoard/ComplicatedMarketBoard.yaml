@@ -1,16 +1,15 @@
 author: FranFkntastic
 name: ComplicatedMarketBoard
 repo_url: https://github.com/FranFkntastic/ComplicatedMarketBoard
-punchline: A less simple market board plugin for power users.
+punchline: A compact Dalamud market board helper for FFXIV.
 description: |
-  A niche plugin designed to be user-friendly and multi-functional with rich customisation options, for power users.
+  A compact market board helper with quick item lookup, sortable tables, configurable market scopes, and clearer Universalis freshness information.
 
   Highlights:
-    - Compact UI and user theme
-    - Customisable search options
-    - Rich ways for plugin interaction
-
-  Check out the 'Introduction' on Config Window for documentation.
+    - Search from hover, hotkey, clipboard, or item name
+    - Compare prices by world, data center, or region
+    - Sort and resize market tables
+    - View retainer names, buyer names, market freshness, and market velocity when available
 tags:
   - Marketboard
   - Price

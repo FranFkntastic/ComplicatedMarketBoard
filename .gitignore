@@ -8,3 +8,4 @@ bin/
 /private
 .jk
 dist/
+docs/
