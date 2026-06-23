@@ -1,7 +1,10 @@
 .vs/
+.idea/
 obj/
 bin/
 *.user
+*.suo
+*.DotSettings.user
 /private
 .jk
 dist/
