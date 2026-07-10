@@ -34,8 +34,19 @@
     </DalamudPlugin>
   </ProjectExtensions>
 
+  <PropertyGroup>
+    <FranthropyDalamudProject Condition="'$(FranthropyDalamudProject)' == ''">..\..\Franthropy\src\Franthropy.Dalamud\Franthropy.Dalamud.csproj</FranthropyDalamudProject>
+  </PropertyGroup>
+
+  <Target Name="ValidateFranthropyDalamudProject" BeforeTargets="ResolveReferences">
+    <Error
+      Condition="!Exists('$(FranthropyDalamudProject)')"
+      Text="Franthropy.Dalamud project was not found at '$(FranthropyDalamudProject)'. Clone Franthropy beside ComplicatedMarketBoard or set -p:FranthropyDalamudProject=&quot;path\to\Franthropy.Dalamud.csproj&quot;." />
+  </Target>
+
   <ItemGroup>
     <!-- <PackageReference Include="System.Net.Http" Version="4.3.4" /> -->
+    <ProjectReference Include="$(FranthropyDalamudProject)" />
     <ProjectReference Include="..\Miosuke\Miosuke\Miosuke.csproj" />
   </ItemGroup>
 </Project>

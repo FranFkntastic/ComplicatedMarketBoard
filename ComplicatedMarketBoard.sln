@@ -7,6 +7,8 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ComplicatedMarketBoard", "C
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Miosuke", "Miosuke\Miosuke\Miosuke.csproj", "{A9F61219-1E41-4C87-8A42-9C0B9E772C5F}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Franthropy.Dalamud", "..\Franthropy\src\Franthropy.Dalamud\Franthropy.Dalamud.csproj", "{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -31,6 +33,14 @@ Global
 		{A9F61219-1E41-4C87-8A42-9C0B9E772C5F}.Release|Any CPU.Build.0 = Release|Any CPU
 		{A9F61219-1E41-4C87-8A42-9C0B9E772C5F}.Release|x64.ActiveCfg = Release|Any CPU
 		{A9F61219-1E41-4C87-8A42-9C0B9E772C5F}.Release|x64.Build.0 = Release|Any CPU
+		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Debug|x64.ActiveCfg = Debug|x64
+		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Debug|x64.Build.0 = Debug|x64
+		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Release|Any CPU.Build.0 = Release|Any CPU
+		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Release|x64.ActiveCfg = Release|x64
+		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Release|x64.Build.0 = Release|x64
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

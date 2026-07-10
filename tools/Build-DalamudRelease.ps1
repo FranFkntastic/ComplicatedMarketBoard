@@ -7,6 +7,8 @@ param(
 
     [string] $RepositoryUrl = "https://raw.githubusercontent.com/FranFkntastic/DalamudPlugins/main/pluginmaster.json",
 
+    [string] $FranthropyDalamudProject = "",
+
     [string] $OutputDirectory = "",
 
     [switch] $SkipBuild
@@ -15,8 +17,8 @@ param(
 $ErrorActionPreference = "Stop"
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
-$solutionPath = Join-Path $repoRoot "ComplicatedMarketBoard.sln"
 $projectDir = Join-Path $repoRoot "ComplicatedMarketBoard"
+$projectPath = Join-Path $projectDir "ComplicatedMarketBoard.csproj"
 $pluginName = "ComplicatedMarketBoard"
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
@@ -39,7 +41,18 @@ if (-not $SkipBuild) {
         Remove-Item -LiteralPath $buildOutput -Recurse -Force
     }
 
-    dotnet build $solutionPath -c $Configuration -p:UseSharedCompilation=false
+    $buildArgs = @(
+        "build",
+        $projectPath,
+        "-c",
+        $Configuration,
+        "-p:UseSharedCompilation=false"
+    )
+    if (-not [string]::IsNullOrWhiteSpace($FranthropyDalamudProject)) {
+        $buildArgs += "-p:FranthropyDalamudProject=$FranthropyDalamudProject"
+    }
+
+    dotnet @buildArgs
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
@@ -60,6 +73,8 @@ $packageFiles = @(
     "$pluginName.deps.json",
     "$pluginName.json",
     "$pluginName.xml",
+    "Franthropy.Dalamud.dll",
+    "Franthropy.Dalamud.xml",
     "Miosuke.dll",
     "Miosuke.xml"
 )
