@@ -34,7 +34,7 @@ if (-not (Test-Path $dalamudPluginsPathFull)) {
     throw "DalamudPlugins repository was not found: $dalamudPluginsPathFull"
 }
 
-$sourceEntries = @(Get-Content -LiteralPath $sourceRepoJsonFull -Raw | ConvertFrom-Json)
+$sourceEntries = Get-Content -LiteralPath $sourceRepoJsonFull -Raw | ConvertFrom-Json
 if ($sourceEntries.Count -ne 1) {
     throw "Expected exactly one plugin entry in $sourceRepoJsonFull, found $($sourceEntries.Count)."
 }
@@ -66,7 +66,7 @@ if ($response.StatusCode -lt 200 -or $response.StatusCode -ge 400) {
 
 $pluginmasterEntries = @()
 if (Test-Path $pluginmasterPathFull) {
-    $pluginmasterEntries = @(Get-Content -LiteralPath $pluginmasterPathFull -Raw | ConvertFrom-Json)
+    $pluginmasterEntries = Get-Content -LiteralPath $pluginmasterPathFull -Raw | ConvertFrom-Json
 }
 
 $updatedEntries = @($pluginmasterEntries | Where-Object { $_.InternalName -ne $sourceEntry.InternalName })
@@ -80,7 +80,7 @@ $pluginmasterJson = ConvertTo-Json -InputObject @($updatedEntries) -Depth 8
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 [System.IO.File]::WriteAllText($pluginmasterPathFull, $pluginmasterJson, $utf8NoBom)
 
-$validatedEntries = @(Get-Content -LiteralPath $pluginmasterPathFull -Raw | ConvertFrom-Json)
+$validatedEntries = Get-Content -LiteralPath $pluginmasterPathFull -Raw | ConvertFrom-Json
 $updatedEntry = $validatedEntries | Where-Object { $_.InternalName -eq $sourceEntry.InternalName } | Select-Object -First 1
 if ($null -eq $updatedEntry) {
     throw "Updated pluginmaster does not contain $($sourceEntry.InternalName)."
