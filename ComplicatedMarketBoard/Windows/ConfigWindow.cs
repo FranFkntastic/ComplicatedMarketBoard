@@ -9,7 +9,8 @@ using Miosuke.Configuration;
 using Lumina.Excel.Sheets;
 using Lumina.Extensions;
 using Dalamud.Bindings.ImGui;
-using ComplicatedMarketBoard.Modules;
+using ComplicatedMarketBoard.Market;
+using ComplicatedMarketBoard.Windows.Controls;
 using Miosuke.Extensions;
 
 
@@ -19,8 +20,6 @@ public class ConfigWindow : Window, IDisposable
 {
     private readonly HotkeyUi search_hotkey_helper;
     private readonly HotkeyUi window_hotkey_helper;
-    private string newCustomScopeName = "";
-    private string editingCustomScopeId = "";
 
     public ConfigWindow() : base(
         "ComplicatedMarketBoard Configuration"
@@ -347,7 +346,8 @@ public class ConfigWindow : Window, IDisposable
         ImGui.Spacing();
         ImGui.TextColored(Ui.ColourCyan, "Custom scopes");
         ImGuiComponents.HelpMarker("Custom scopes can combine regions, data centers, and individual worlds into one reusable market target.");
-        DrawCustomScopes($"{suffix}-CustomScopes");
+        if (ImGui.Button("Manage custom scopes"))
+            P.CustomScopeWindow.Open();
 
 
 
@@ -359,7 +359,7 @@ public class ConfigWindow : Window, IDisposable
         ImGui.SetNextItemWidth(200);
         if (ImGui.BeginCombo($"{suffix}priceToPrint", P.Config.priceToPrint.ToString()))
         {
-            foreach (var type in Enum.GetValues(typeof(PriceChecker.PriceToPrint)).Cast<PriceChecker.PriceToPrint>())
+            foreach (var type in Enum.GetValues<PriceDisplayMode>())
             {
                 if (ImGui.Selectable(type.ToString(), type == P.Config.priceToPrint))
                 {
@@ -428,193 +428,16 @@ public class ConfigWindow : Window, IDisposable
 
     private void DrawAdditionalScopePicker(string suffix)
     {
-        DrawScopeTree(P.Config.AdditionalWorlds, suffix, true);
-        DrawUnknownSavedEntries(P.Config.AdditionalWorlds, suffix);
-    }
-
-    private void DrawCustomScopes(string suffix)
-    {
-        for (var i = 0; i < P.Config.CustomMarketScopes.Count; i++)
-        {
-            var customScope = P.Config.CustomMarketScopes[i];
-            ImGui.PushID($"{suffix}-{customScope.Id}");
-
-            var scopeName = customScope.Name;
-            ImGui.SetNextItemWidth(190);
-            if (ImGui.InputText("##name", ref scopeName, 48))
-            {
-                customScope.Name = scopeName;
-                P.Config.Save();
-                P.MainWindow.UpdateWorld();
-            }
-
-            ImGui.SameLine();
-            if (ImGui.Button(editingCustomScopeId == customScope.Id ? "Close" : "Edit"))
-                editingCustomScopeId = editingCustomScopeId == customScope.Id ? "" : customScope.Id;
-
-            ImGui.SameLine();
-            ImGui.PushFont(UiBuilder.IconFont);
-            if (ImGui.Button(FontAwesomeIcon.Trash.ToIconString()))
-            {
-                if (P.Config.selectedCustomScopeId == customScope.Id)
-                    P.Config.selectedCustomScopeId = "";
-
-                P.Config.CustomMarketScopes.RemoveAt(i--);
-                P.Config.Save();
-                P.MainWindow.UpdateWorld();
-                ImGui.PopFont();
-                ImGui.PopID();
-                if (i < 0) break;
-                continue;
-            }
-            ImGui.PopFont();
-
-            ImGui.TextDisabled(GetCustomScopeSummary(customScope));
-
-            if (editingCustomScopeId == customScope.Id)
-            {
-                ImGui.Indent();
-                DrawScopeTree(customScope.IncludedScopes, $"{suffix}-{customScope.Id}-picker", false);
-                DrawUnknownSavedEntries(customScope.IncludedScopes, $"{suffix}-{customScope.Id}-unknown");
-                ImGui.Unindent();
-            }
-
-            ImGui.PopID();
-        }
-
-        ImGui.SetNextItemWidth(190);
-        ImGui.InputText($"{suffix}-new-name", ref newCustomScopeName, 48);
-        ImGui.SameLine();
-        ImGui.PushFont(UiBuilder.IconFont);
-        if (ImGui.Button($"{FontAwesomeIcon.Plus.ToIconString()}{suffix}-add"))
-        {
-            var name = string.IsNullOrWhiteSpace(newCustomScopeName) ? "New custom scope" : newCustomScopeName.Trim();
-            var customScope = new CustomMarketScope { Name = name };
-            P.Config.CustomMarketScopes.Add(customScope);
-            editingCustomScopeId = customScope.Id;
-            newCustomScopeName = "";
-            P.Config.Save();
-            P.MainWindow.UpdateWorld();
-        }
-        ImGui.PopFont();
-    }
-
-    private void DrawScopeTree(List<string> selectedScopes, string suffix, bool cascadeDataCenter)
-    {
-        var catalog = P.MainWindow.ScopeCatalog;
-        if (catalog.CanonicalizeConfigList(selectedScopes))
+        ScopeTreeEditor.Draw(P.Config.AdditionalWorlds, suffix, true, false, "", () =>
         {
             P.Config.Save();
             P.MainWindow.UpdateWorld();
-        }
-
-        foreach (var region in catalog.Regions)
+        });
+        ScopeTreeEditor.DrawUnknownSavedEntries(P.Config.AdditionalWorlds, suffix, () =>
         {
-            var regionChecked = selectedScopes.Contains(region, StringComparer.OrdinalIgnoreCase);
-            if (ImGui.Checkbox($"##{suffix}-region-check-{region}", ref regionChecked))
-                SetScopeSelected(selectedScopes, region, regionChecked, false);
-
-            ImGui.SameLine();
-            var regionOpen = ImGui.TreeNodeEx($"{region}##{suffix}-region-tree-{region}", ImGuiTreeNodeFlags.SpanAvailWidth);
-            if (regionOpen)
-            {
-                if (catalog.DataCentersByRegion.TryGetValue(region, out var dataCenters))
-                {
-                    foreach (var dataCenter in dataCenters)
-                    {
-                        var dataCenterChecked = selectedScopes.Contains(dataCenter, StringComparer.OrdinalIgnoreCase);
-                        if (ImGui.Checkbox($"##{suffix}-dc-check-{dataCenter}", ref dataCenterChecked))
-                            SetScopeSelected(selectedScopes, dataCenter, dataCenterChecked, cascadeDataCenter);
-
-                        ImGui.SameLine();
-                        var dataCenterOpen = ImGui.TreeNodeEx($"{dataCenter}##{suffix}-dc-tree-{dataCenter}", ImGuiTreeNodeFlags.SpanAvailWidth);
-                        if (dataCenterOpen)
-                        {
-                            foreach (var world in catalog.GetWorldsInDataCenter(dataCenter))
-                            {
-                                var worldChecked = selectedScopes.Contains(world.Name, StringComparer.OrdinalIgnoreCase);
-                                if (ImGui.Checkbox($"{world.DisplayName}{suffix}-world-{world.Name}", ref worldChecked))
-                                    SetScopeSelected(selectedScopes, world.Name, worldChecked, false);
-                            }
-
-                            ImGui.TreePop();
-                        }
-                    }
-                }
-
-                ImGui.TreePop();
-            }
-        }
-    }
-
-    private void SetScopeSelected(List<string> selectedScopes, string scopeName, bool selected, bool cascadeDataCenter)
-    {
-        var catalog = P.MainWindow.ScopeCatalog;
-        var canonicalName = catalog.CanonicalizeName(scopeName);
-        if (canonicalName is null)
-            return;
-
-        if (selected)
-        {
-            AddScope(selectedScopes, canonicalName);
-            if (cascadeDataCenter && catalog.TryGetScope(canonicalName, out var scope) && scope.Kind == MarketScopeKind.DataCenter)
-            {
-                foreach (var world in catalog.GetWorldsInDataCenter(scope.Name))
-                    AddScope(selectedScopes, world.Name);
-            }
-        }
-        else
-        {
-            RemoveScope(selectedScopes, canonicalName);
-            if (cascadeDataCenter && catalog.TryGetScope(canonicalName, out var scope) && scope.Kind == MarketScopeKind.DataCenter)
-            {
-                foreach (var world in catalog.GetWorldsInDataCenter(scope.Name))
-                    RemoveScope(selectedScopes, world.Name);
-            }
-        }
-
-        P.Config.Save();
-        P.MainWindow.UpdateWorld();
-    }
-
-    private static void AddScope(List<string> selectedScopes, string scopeName)
-    {
-        if (!selectedScopes.Contains(scopeName, StringComparer.OrdinalIgnoreCase))
-            selectedScopes.Add(scopeName);
-    }
-
-    private static void RemoveScope(List<string> selectedScopes, string scopeName)
-        => selectedScopes.RemoveAll(scope => string.Equals(scope, scopeName, StringComparison.OrdinalIgnoreCase));
-
-    private void DrawUnknownSavedEntries(List<string> selectedScopes, string suffix)
-    {
-        var unknownScopes = P.MainWindow.ScopeCatalog.GetUnknownScopes(selectedScopes);
-        if (unknownScopes.Count == 0)
-            return;
-
-        ImGui.TextColored(Ui.ColourCrimson, "Unknown saved entries");
-        foreach (var unknownScope in unknownScopes)
-        {
-            ImGui.Text(unknownScope);
-            ImGui.SameLine();
-            ImGui.PushFont(UiBuilder.IconFont);
-            if (ImGui.Button($"{FontAwesomeIcon.Trash.ToIconString()}{suffix}-unknown-{unknownScope}"))
-            {
-                RemoveScope(selectedScopes, unknownScope);
-                P.Config.Save();
-                P.MainWindow.UpdateWorld();
-            }
-            ImGui.PopFont();
-        }
-    }
-
-    private string GetCustomScopeSummary(CustomMarketScope customScope)
-    {
-        var worldCount = P.MainWindow.ScopeCatalog.ExpandToWorldNames(customScope.IncludedScopes).Count;
-        if (worldCount == 0)
-            return "No worlds selected";
-
-        return $"{worldCount} world{(worldCount == 1 ? "" : "s")}";
+            P.Config.Save();
+            P.MainWindow.UpdateWorld();
+        });
     }
 
     private void DrawData(float padding)

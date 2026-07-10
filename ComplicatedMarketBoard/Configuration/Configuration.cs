@@ -1,7 +1,7 @@
 using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Text;
 using Miosuke.Configuration;
-using ComplicatedMarketBoard.Modules;
+using ComplicatedMarketBoard.Market;
 
 
 namespace ComplicatedMarketBoard.Configuration;
@@ -35,7 +35,7 @@ public class ComplicatedMarketBoardConfig : IMioConfig
     public List<CustomMarketScope> CustomMarketScopes = new List<CustomMarketScope>();
 
     // notification
-    public PriceChecker.PriceToPrint priceToPrint = PriceChecker.PriceToPrint.SoldLow;
+    public PriceDisplayMode priceToPrint = PriceDisplayMode.SoldLow;
     public bool EnableChatLog = true;
     public XivChatType ChatLogChannel = XivChatType.Debug;
     public bool EnableToastLog = false;

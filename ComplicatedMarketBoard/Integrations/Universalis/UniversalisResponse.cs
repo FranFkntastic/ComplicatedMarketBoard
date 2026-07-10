@@ -4,7 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 
 
-namespace ComplicatedMarketBoard.API;
+namespace ComplicatedMarketBoard.Integrations.Universalis;
 
 public class UniversalisResponseStatus
 {
@@ -21,6 +21,11 @@ public class UniversalisResponseStatus
 public class UniversalisResponse
 {
     public ulong Status { get; set; }
+
+    /// <summary>
+    /// The actionable reason a request failed, when Universalis returned one.
+    /// </summary>
+    public string FailureDetail { get; set; } = "";
 
     /// <summary>
     /// User-facing market scope label represented by this response.

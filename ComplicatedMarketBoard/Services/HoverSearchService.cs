@@ -1,11 +1,11 @@
 using System.Threading;
 
-namespace ComplicatedMarketBoard.Modules;
+namespace ComplicatedMarketBoard.Services;
 
-public class HoveredItem
+public sealed class HoverSearchService
 {
 
-    public HoveredItem()
+    public HoverSearchService()
     {
         Service.GameGui.HoveredItemChanged += OnHoveredItemChanged;
     }
@@ -72,7 +72,7 @@ public class HoveredItem
         }
 
         // check new item
-        P.PriceChecker.DoCheckAsync(itemId);
+        P.MarketRefresh.DoCheckAsync(itemId);
 
         // clean up
         SavedItemId = 0;

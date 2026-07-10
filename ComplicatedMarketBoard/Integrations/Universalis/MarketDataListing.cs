@@ -4,7 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json.Serialization;
 
 
-namespace ComplicatedMarketBoard.API;
+namespace ComplicatedMarketBoard.Integrations.Universalis;
 
 /// <summary>
 /// A model representing a market data listing from Universalis.

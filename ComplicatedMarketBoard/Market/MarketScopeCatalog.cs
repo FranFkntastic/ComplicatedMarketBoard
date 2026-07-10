@@ -1,10 +1,11 @@
 using ComplicatedMarketBoard.Assets;
 using Lumina.Excel.Sheets;
 
-namespace ComplicatedMarketBoard.Modules;
+namespace ComplicatedMarketBoard.Market;
 
 public enum MarketScopeKind
 {
+    CurrentWorld,
     Region,
     DataCenter,
     World,
@@ -36,26 +37,45 @@ public sealed record MarketScopeSelectorRow(
     bool IsHomeWorld = false,
     string CustomScopeId = "");
 
+public sealed record MarketWorldInfo(
+    string Name,
+    string DataCenterName,
+    string RegionName,
+    uint WorldId);
+
 public sealed class MarketScopeCatalog
 {
+    public const string CurrentWorldScopeName = "Current World";
+
     private readonly Dictionary<string, MarketScopeOption> scopesByName;
     private readonly Dictionary<string, string> canonicalNames;
 
     public MarketScopeCatalog()
-    {
-        Regions = Data.WorldSheet
+        : this(Data.WorldSheet
             .Where(world => world.IsPublic)
-            .Select(world => CanonicalRegionName(world.DataCenter.Value.Region.Value.Name.ToString()))
+            .Select(world => new MarketWorldInfo(
+                world.Name.ToString(),
+                world.DataCenter.Value.Name.ToString(),
+                world.DataCenter.Value.Region.Value.Name.ToString(),
+                world.RowId)))
+    {
+    }
+
+    public MarketScopeCatalog(IEnumerable<MarketWorldInfo> worlds)
+    {
+        var knownWorlds = worlds.ToList();
+
+        Regions = knownWorlds
+            .Select(world => CanonicalRegionName(world.RegionName))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(region => region, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        DataCentersByRegion = Data.WorldSheet
-            .Where(world => world.IsPublic)
+        DataCentersByRegion = knownWorlds
             .Select(world => new
             {
-                Region = CanonicalRegionName(world.DataCenter.Value.Region.Value.Name.ToString()),
-                DataCenter = world.DataCenter.Value.Name.ToString(),
+                Region = CanonicalRegionName(world.RegionName),
+                DataCenter = world.DataCenterName,
             })
             .Distinct()
             .GroupBy(item => item.Region)
@@ -63,23 +83,23 @@ public sealed class MarketScopeCatalog
                 group => group.Key,
                 group => group.Select(item => item.DataCenter).OrderBy(name => name, StringComparer.OrdinalIgnoreCase).ToList());
 
-        WorldsByDataCenter = Data.WorldSheet
-            .Where(world => world.IsPublic)
-            .GroupBy(world => world.DataCenter.Value.Name.ToString())
+        WorldsByDataCenter = knownWorlds
+            .GroupBy(world => world.DataCenterName)
             .ToDictionary(
                 group => group.Key,
                 group => group
-                    .OrderBy(world => world.Name.ToString(), StringComparer.OrdinalIgnoreCase)
+                    .OrderBy(world => world.Name, StringComparer.OrdinalIgnoreCase)
                     .Select(world => new MarketScopeOption(
-                        world.Name.ToString(),
-                        world.Name.ToString(),
+                        world.Name,
+                        world.Name,
                         MarketScopeKind.World,
-                        CanonicalRegionName(world.DataCenter.Value.Region.Value.Name.ToString()),
-                        world.DataCenter.Value.Name.ToString(),
-                        world.RowId))
+                        CanonicalRegionName(world.RegionName),
+                        world.DataCenterName,
+                        world.WorldId))
                     .ToList());
 
         var options = new List<MarketScopeOption>();
+        options.Add(new MarketScopeOption(CurrentWorldScopeName, CurrentWorldScopeName, MarketScopeKind.CurrentWorld));
         options.AddRange(Regions.Select(region => new MarketScopeOption(region, region, MarketScopeKind.Region, region)));
         options.AddRange(DataCentersByRegion.SelectMany(region => region.Value.Select(dataCenter => new MarketScopeOption(dataCenter, dataCenter, MarketScopeKind.DataCenter, region.Key, dataCenter))));
         options.AddRange(WorldsByDataCenter.SelectMany(group => group.Value));
@@ -160,12 +180,12 @@ public sealed class MarketScopeCatalog
             ? worlds
             : [];
 
-    public List<string> ExpandToWorldNames(IEnumerable<string> scopeNames)
+    public List<string> ExpandToWorldNames(IEnumerable<string> scopeNames, string currentWorldName = "")
     {
         var worlds = new List<string>();
         foreach (var scopeName in scopeNames)
         {
-            var canonicalName = CanonicalizeName(scopeName);
+            var canonicalName = CanonicalizeDynamicName(scopeName, currentWorldName);
             if (canonicalName is null || !TryGetScope(canonicalName, out var scope))
                 continue;
 
@@ -187,10 +207,10 @@ public sealed class MarketScopeCatalog
         return worlds;
     }
 
-    public List<string> BuildQueryTargets(IEnumerable<string> scopeNames)
+    public List<string> BuildQueryTargets(IEnumerable<string> scopeNames, string currentWorldName = "")
     {
         var selectedScopes = scopeNames
-            .Select(CanonicalizeName)
+            .Select(scopeName => CanonicalizeDynamicName(scopeName, currentWorldName))
             .Where(name => name is not null)
             .Select(name => scopesByName[name!])
             .ToList();
@@ -228,6 +248,17 @@ public sealed class MarketScopeCatalog
         => string.Equals(targetName, "North America", StringComparison.OrdinalIgnoreCase)
             ? "North-America"
             : targetName;
+
+    private string? CanonicalizeDynamicName(string scopeName, string currentWorldName)
+    {
+        var canonicalName = CanonicalizeName(scopeName);
+        if (!string.Equals(canonicalName, CurrentWorldScopeName, StringComparison.OrdinalIgnoreCase))
+            return canonicalName;
+
+        return string.IsNullOrWhiteSpace(currentWorldName)
+            ? null
+            : CanonicalizeName(currentWorldName);
+    }
 
     private static string CanonicalRegionName(string regionName)
         => string.Equals(regionName, "North-America", StringComparison.OrdinalIgnoreCase)

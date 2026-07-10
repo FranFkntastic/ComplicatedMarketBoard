@@ -7,10 +7,11 @@ using Dalamud.Interface.Style;
 using Dalamud.Plugin.Services;
 using Miosuke.Configuration;
 using Miosuke.Messages;
-using ComplicatedMarketBoard.API;
+using ComplicatedMarketBoard.Integrations.Universalis;
 using ComplicatedMarketBoard.Assets;
 using ComplicatedMarketBoard.Configuration;
-using ComplicatedMarketBoard.Modules;
+using ComplicatedMarketBoard.Market;
+using ComplicatedMarketBoard.Services;
 using ComplicatedMarketBoard.Windows;
 
 
@@ -31,12 +32,14 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
     public bool PluginThemeEnabled { get; set; }
 
     // MODULES
-    public HoveredItem HoveredItem { get; set; } = null!;
-    public PriceChecker PriceChecker { get; set; } = null!;
-    public Universalis Universalis { get; set; } = null!;
+    public HoverSearchService HoverSearch { get; set; } = null!;
+    public MarketRefreshService MarketRefresh { get; set; } = null!;
+    public UniversalisClient Universalis { get; set; } = null!;
+    public WorldTravelService WorldTravel { get; set; } = null!;
 
     // WINDOWS
     public ConfigWindow ConfigWindow { get; init; }
+    public CustomScopeWindow CustomScopeWindow { get; init; }
     public MainWindow MainWindow { get; init; }
     public WindowSystem WindowSystem = new("ComplicatedMarketBoard");
 
@@ -88,16 +91,19 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
 
         // MODULES
 
-        Universalis = new Universalis();
-        HoveredItem = new HoveredItem();
-        PriceChecker = new PriceChecker();
+        Universalis = new UniversalisClient();
+        HoverSearch = new HoverSearchService();
+        MarketRefresh = new MarketRefreshService();
+        WorldTravel = new WorldTravelService();
 
 
         // WINDOWS
 
         ConfigWindow = new ConfigWindow();
+        CustomScopeWindow = new CustomScopeWindow();
         MainWindow = new MainWindow();
         WindowSystem.AddWindow(ConfigWindow);
+        WindowSystem.AddWindow(CustomScopeWindow);
         WindowSystem.AddWindow(MainWindow);
 
 
@@ -121,12 +127,13 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         Service.Commands.RemoveHandler(CommandMainAlt);
 
         // unload modules
-        HoveredItem.Dispose();
-        PriceChecker.Dispose();
+        HoverSearch.Dispose();
+        MarketRefresh.Dispose();
         Universalis.Dispose();
 
         // unload windows
         ConfigWindow.Dispose();
+        CustomScopeWindow.Dispose();
         MainWindow.Dispose();
 
         // unload event handlers
@@ -251,21 +258,21 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         {
             if (MainWindow.IsOpen)
             {
-                if (Config.SearchHotkeyCanHide && (HoveredItem.HoverItemId == 0))
+                if (Config.SearchHotkeyCanHide && (HoverSearch.HoverItemId == 0))
                 {
                     searchHotkeyHandled = true;
                     MainWindow.IsOpen = false;
                 }
-                else if (HoveredItem.SavedItemId != 0)
+                else if (HoverSearch.SavedItemId != 0)
                 {
                     searchHotkeyHandled = true;
-                    HoveredItem.CheckItem(HoveredItem.SavedItemId);
+                    HoverSearch.CheckItem(HoverSearch.SavedItemId);
                 }
             }
-            else if (Config.HotkeyBackgroundSearchEnabled && (HoveredItem.HoverItemId != 0))
+            else if (Config.HotkeyBackgroundSearchEnabled && (HoverSearch.HoverItemId != 0))
             {
                 searchHotkeyHandled = true;
-                HoveredItem.CheckItem(HoveredItem.HoverItemId);
+                HoverSearch.CheckItem(HoverSearch.HoverItemId);
             }
         }
     }

@@ -3,7 +3,7 @@
 using System.Text.Json.Serialization;
 
 
-namespace ComplicatedMarketBoard.API;
+namespace ComplicatedMarketBoard.Integrations.Universalis;
 
 /// <summary>
 /// A model representing a market data recent history from Universalis.

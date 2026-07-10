@@ -9,14 +9,15 @@ using Lumina.Excel.Sheets;
 using Lumina.Extensions;
 using Miosuke.Configuration;
 using Miosuke.UiHelper;
-using ComplicatedMarketBoard.API;
+using ComplicatedMarketBoard.Integrations.Universalis;
 using ComplicatedMarketBoard.Assets;
-using ComplicatedMarketBoard.Modules;
+using ComplicatedMarketBoard.Market;
+using ComplicatedMarketBoard.Services;
 
 
 namespace ComplicatedMarketBoard.Windows;
 
-public class MainWindow : Window, IDisposable
+public partial class MainWindow : Window, IDisposable
 {
     private static readonly float[] ListingColumnBaseWidths = [70.0f, 40.0f, 80.0f, 80.0f, 90.0f];
     private static readonly float[] HistoryColumnBaseWidths = [70.0f, 40.0f, 80.0f, 80.0f, 90.0f];
@@ -75,7 +76,7 @@ public class MainWindow : Window, IDisposable
 
     public override void OnClose()
     {
-        P.PriceChecker.SearchHistoryClean();
+        P.MarketRefresh.SearchHistoryClean();
     }
 
     public void Dispose()
@@ -83,11 +84,11 @@ public class MainWindow : Window, IDisposable
     }
 
 
-    public PriceChecker.GameItem CurrentItem { get; set; } = new PriceChecker.GameItem();
+    public MarketItem CurrentItem { get; set; } = new();
     public ISharedImmediateTexture CurrentItemIcon = null!;
     public string CurrentItemLabel = "";
 
-    public void CurrentItemUpdate(PriceChecker.GameItem gameItem)
+    public void CurrentItemUpdate(MarketItem gameItem)
     {
         CurrentItem = gameItem;
         CurrentItemIcon = Service.Texture.GetFromGameIcon(new GameIconLookup(CurrentItem.InGame.Icon))!;
@@ -176,6 +177,14 @@ public class MainWindow : Window, IDisposable
         RefreshStatusText = $"Market refresh failed: {errorText}";
     }
 
+    public void ShowCachedMarketData(string itemName)
+    {
+        RefreshInProgress = false;
+        RefreshProgress = 1.0f;
+        RefreshErrorText = "";
+        RefreshStatusText = $"Showing cached market data for {itemName}";
+    }
+
 
     public override void Draw()
     {
@@ -188,9 +197,6 @@ public class MainWindow : Window, IDisposable
         var LeftColWidth = ImGui.GetWindowWidth() - rightColWidth - ResizeHandleWidth - spacing.X;
 
         // -------------------------------- [  run check  ] --------------------------------
-        // plugin.HoveredItem.CheckLastItem();
-
-
         // -------------------------------- [  column left  ] --------------------------------
         ImGui.BeginChild("col_left", new Vector2(LeftColWidth, 0), false, ImGuiWindowFlags.NoScrollbar);
 
@@ -481,7 +487,7 @@ public class MainWindow : Window, IDisposable
             if (Miosuke.Action.Hotkey.IsActive([VirtualKey.CONTROL], !P.Config.SearchHotkeyLoose))
             {
                 var clipboardItemId = ParseItemId(ImGui.GetClipboardText());
-                P.PriceChecker.DoCheckAsync(clipboardItemId);
+                P.MarketRefresh.DoCheckAsync(clipboardItemId);
             }
             else
             {
@@ -503,7 +509,7 @@ public class MainWindow : Window, IDisposable
             if (ImGui.Selectable("New search from clipboard (Ctrl+LClick)"))
             {
                 var clipboardItemId = ParseItemId(ImGui.GetClipboardText());
-                P.PriceChecker.DoCheckAsync(clipboardItemId);
+                P.MarketRefresh.DoCheckAsync(clipboardItemId);
             }
             ImGui.EndPopup();
         }
@@ -534,7 +540,7 @@ public class MainWindow : Window, IDisposable
         ImGui.PushFont(UiBuilder.IconFont);
         if (ImGui.Button($"{(char)FontAwesomeIcon.Repeat}", new Vector2(size, size)))
         {
-            P.PriceChecker.DoCheckRefreshAsync(CurrentItem);
+            P.MarketRefresh.DoCheckRefreshAsync(CurrentItem);
         }
         ImGui.PopFont();
     }
@@ -593,23 +599,12 @@ public class MainWindow : Window, IDisposable
                 {
                     if (scope.Kind == MarketScopeKind.Custom)
                     {
-                        P.Config.selectedCustomScopeId = scope.CustomScopeId;
+                        SelectCustomMarketScope(scope.CustomScopeId);
                     }
                     else
                     {
-                        P.Config.selectedWorld = scope.Name;
-                        P.Config.selectedCustomScopeId = "";
+                        SelectMarketScope(scope.Name);
                     }
-
-                    P.Config.Save();
-
-                    if (GetSelectedMarketScopeLabel() != lastSelectedWorld)
-                    {
-                        Service.Log.Debug($"Fetch data of {GetSelectedMarketScopeLabel()}");
-                        P.PriceChecker.DoCheckRefreshAsync(CurrentItem);
-                    }
-
-                    lastSelectedWorld = GetSelectedMarketScopeLabel();
                 }
 
                 if (isSelected)
@@ -618,7 +613,23 @@ public class MainWindow : Window, IDisposable
                 }
 
                 if (scope.IsHomeWorld) ImGui.PopStyleColor();
+
+                if (scope.Kind == MarketScopeKind.CurrentWorld)
+                {
+                    DrawWorldTravelContextMenu(GetCurrentWorldScopeName(), $"selector-current-{scope.Name}");
+                }
+                else if (scope.Kind == MarketScopeKind.World)
+                {
+                    DrawWorldTravelContextMenu(scope.Name, $"selector-{scope.Name}");
+                }
             }
+
+            ImGui.Separator();
+            if (ImGui.Selectable($"Manage custom scopes...##{Name}ManageCustomScopes"))
+                P.CustomScopeWindow.Open();
+
+            if (ImGui.Selectable($"New custom scope...##{Name}NewCustomScope"))
+                P.CustomScopeWindow.OpenForNew();
 
             ImGui.EndCombo();
         }
@@ -639,6 +650,62 @@ public class MainWindow : Window, IDisposable
         }
 
         return P.Config.selectedWorld;
+    }
+
+    public string GetCurrentWorldScopeName()
+        => playerHomeWorld;
+
+    private void DrawWorldTravelContextMenu(string worldName, string idSuffix)
+    {
+        if (string.IsNullOrWhiteSpace(worldName))
+            return;
+
+        if (!ImGui.BeginPopupContextItem($"world-travel-{idSuffix}-{worldName}"))
+            return;
+
+        var isCurrentWorld = string.Equals(worldName, GetCurrentWorldScopeName(), StringComparison.OrdinalIgnoreCase);
+        if (ImGui.Selectable(isCurrentWorld ? "Travel to nearest market board" : $"Travel to {worldName} market board"))
+        {
+            P.WorldTravel.TravelToMarketBoard(worldName);
+        }
+
+        if (ImGui.Selectable("Copy travel command"))
+        {
+            P.WorldTravel.CopyMarketBoardTravelCommand(worldName);
+        }
+
+        ImGui.EndPopup();
+    }
+
+    public void SelectMarketScope(string scopeName)
+    {
+        P.Config.selectedWorld = scopeName;
+        P.Config.selectedCustomScopeId = "";
+        SaveMarketScopeSelection();
+    }
+
+    public void SelectCustomMarketScope(string customScopeId)
+    {
+        P.Config.selectedCustomScopeId = customScopeId;
+        SaveMarketScopeSelection();
+    }
+
+    public void RefreshSelectedMarketScope()
+    {
+        var currentLabel = GetSelectedMarketScopeLabel();
+        Service.Log.Debug($"Fetch data of {currentLabel}");
+        P.MarketRefresh.DoCheckRefreshAsync(CurrentItem);
+        lastSelectedWorld = currentLabel;
+    }
+
+    private void SaveMarketScopeSelection()
+    {
+        P.Config.Save();
+
+        if (GetSelectedMarketScopeLabel() != lastSelectedWorld)
+            RefreshSelectedMarketScope();
+
+        lastSelectedWorld = GetSelectedMarketScopeLabel();
     }
 
     private static string GetScopeIcon(MarketScopeKind kind) => kind switch
@@ -742,7 +809,7 @@ public class MainWindow : Window, IDisposable
         lastItemSearchText = result.Name;
         itemSearchOpen = false;
         itemSearchResults.Clear();
-        P.PriceChecker.DoCheckAsync(result.Id);
+        P.MarketRefresh.DoCheckAsync(result.Id);
     }
 
     private void DrawPriceTables(float availableHeight)
@@ -1061,7 +1128,9 @@ public class MainWindow : Window, IDisposable
 
                 // World
                 ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
-                ImGui.Text(GetListingWorld(listing));
+                var listingWorld = GetListingWorld(listing);
+                ImGui.Text(listingWorld);
+                DrawWorldTravelContextMenu(listingWorld, $"listing-{index}");
                 ImGui.TableNextColumn();
 
                 // Retainer
@@ -1175,11 +1244,11 @@ public class MainWindow : Window, IDisposable
         {
             if (Miosuke.Action.Hotkey.IsActive([VirtualKey.CONTROL], !P.Config.SearchHotkeyLoose))
             {
-                P.PriceChecker.GameItemCacheList.Clear();
+                P.MarketRefresh.GameItemCacheList.Clear();
             }
             else
             {
-                P.PriceChecker.GameItemCacheList.RemoveAll(i => i.Id == CurrentItem.Id);
+                P.MarketRefresh.GameItemCacheList.RemoveAll(i => i.Id == CurrentItem.Id);
             }
         }
         ImGui.PopFont();
@@ -1194,143 +1263,6 @@ public class MainWindow : Window, IDisposable
         }
         ImGui.PopFont();
     }
-
-    private void DrawMarketDataStatusBar(Vector2 spacing)
-    {
-        if (CurrentItem.Id == 0)
-            return;
-
-        ImGui.Spacing();
-        ImGui.BeginChild(
-            "market data refresh status",
-            new Vector2(0, ImGui.GetTextLineHeightWithSpacing() + spacing.Y),
-            true,
-            ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
-        ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 0.2f * spacing.Y);
-
-        if (RefreshInProgress)
-        {
-            var elapsed = FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - RefreshStartedAt);
-            ImGui.ProgressBar(
-                RefreshProgress,
-                new Vector2(-1, ImGui.GetTextLineHeightWithSpacing()),
-                $"{RefreshStatusText}... {elapsed}");
-        }
-        else
-        {
-            ImGui.TextColored(GetMarketRefreshStatusColour(), GetMarketRefreshStatusText());
-        }
-
-        if (ImGui.IsItemHovered())
-            ImGui.SetTooltip(GetMarketDataStatusTooltip());
-        ImGui.EndChild();
-    }
-
-    private Vector4 GetMarketRefreshStatusColour()
-    {
-        var response = CurrentItem.UniversalisResponse;
-        if (response.Status != UniversalisResponseStatus.Success)
-            return Ui.ColourCrimson;
-
-        if (response.FetchTime == 0)
-            return Ui.ColourWhite3;
-
-        return Ui.ColourCyan;
-    }
-
-    private string GetMarketRefreshStatusText()
-    {
-        var response = CurrentItem.UniversalisResponse;
-        if (response.Status != UniversalisResponseStatus.Success)
-            return $"Market refresh failed: {GetUniversalisStatusLabel(response.Status)}";
-
-        if (response.FetchTime == 0)
-            return "Market data not loaded";
-
-        var fetchedAgo = FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - response.FetchTime);
-        return $"Market data refreshed {fetchedAgo} ago";
-    }
-
-    private string GetMarketDataStatusTooltip()
-    {
-        var response = CurrentItem.UniversalisResponse;
-        if (RefreshInProgress)
-        {
-            var elapsed = RefreshStartedAt > 0
-                ? FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - RefreshStartedAt)
-                : "unknown";
-
-            if (response.WorldOutOfDate.Count == 0)
-                return $"{RefreshStatusText}\nElapsed: {elapsed}";
-
-            return $"{RefreshStatusText}\nElapsed: {elapsed}\n\n{GetMarketFreshnessTooltip()}";
-        }
-
-        if (response.Status != UniversalisResponseStatus.Success)
-            return $"Universalis status: {GetUniversalisStatusLabel(response.Status)}.";
-
-        if (response.WorldOutOfDate.Count == 0)
-            return "No freshness data was returned for this item.";
-
-        return GetMarketFreshnessTooltip();
-    }
-
-    private string GetMarketFreshnessTooltip()
-    {
-        var response = CurrentItem.UniversalisResponse;
-        var freshness = response.WorldOutOfDate.OrderByDescending(w => w.Value).ToList();
-        var newest = freshness.MinBy(w => w.Value);
-        var oldest = freshness.MaxBy(w => w.Value);
-        var min = freshness.Min(w => w.Value);
-        var avg = freshness.Average(w => w.Value);
-        var max = freshness.Max(w => w.Value);
-        var fetchedAt = response.FetchTime > 0
-            ? FormatTimestamp(response.FetchTime)
-            : "unknown";
-        var newestUpload = response.LatestUploadTime > 0
-            ? FormatTimestamp(response.LatestUploadTime)
-            : "unknown";
-
-        return
-            $"Fetched: {fetchedAt}\n" +
-            $"Newest upload: {newestUpload}\n" +
-            $"Freshness: {min:F2} / {avg:F2} / {max:F2} hrs min/avg/max\n" +
-            $"Freshest market: {newest.Key} ({newest.Value:F2} hrs)\n" +
-            $"Stalest market: {oldest.Key} ({oldest.Value:F2} hrs)\n" +
-            $"Worlds: {response.WorldOutOfDate.Count}\n" +
-            $"Listings: {response.Listings.Count}\n" +
-            $"Recent sales: {response.Entries.Count}";
-    }
-
-    private static string GetUniversalisStatusLabel(ulong status) => status switch
-    {
-        UniversalisResponseStatus.Success => "ok",
-        UniversalisResponseStatus.ServerError => "server error",
-        UniversalisResponseStatus.InvalidData => "invalid data",
-        UniversalisResponseStatus.UserCancellation => "request timed out",
-        UniversalisResponseStatus.UnknownError => "unknown error",
-        _ => $"status {status}",
-    };
-
-    private static string FormatDuration(long milliseconds)
-    {
-        if (milliseconds < 0)
-            milliseconds = 0;
-
-        var duration = TimeSpan.FromMilliseconds(milliseconds);
-        if (duration.TotalMinutes < 1)
-            return $"{duration.TotalSeconds:F1}s";
-        if (duration.TotalHours < 1)
-            return $"{duration.TotalMinutes:F1}m";
-        if (duration.TotalDays < 1)
-            return $"{duration.TotalHours:F2}h";
-        return $"{duration.TotalDays:F2}d";
-    }
-
-    private static string FormatTimestamp(long unixMilliseconds)
-        => DateTimeOffset.FromUnixTimeMilliseconds(unixMilliseconds)
-            .ToLocalTime()
-            .ToString("yyyy-MM-dd HH:mm:ss.fff zzz", CultureInfo.InvariantCulture);
 
     private void DrawWorldOutdated(Vector2 spacing, float rightColTableWidth)
     {
@@ -1365,6 +1297,7 @@ public class MainWindow : Window, IDisposable
                 ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 0.5f * spacing.Y);
                 ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.WorldUpdateColPaddingOffset[1]);
                 ImGui.Text($"{i.Key}");
+                DrawWorldTravelContextMenu(i.Key, $"freshness-{i.Key}");
             }
 
             SyncColumnWidthOffsets(WorldUpdateColumnBaseWidths, P.Config.WorldUpdateColWidthOffset);
@@ -1386,11 +1319,11 @@ public class MainWindow : Window, IDisposable
     {
         if (searchHistoryOpen)
         {
-            foreach (var item in P.PriceChecker.GameItemCacheList)
+            foreach (var item in P.MarketRefresh.GameItemCacheList)
             {
                 if (ImGui.Selectable($"{item.Name}", (uint)CurrentItem.Id == item.Id))
                 {
-                    P.PriceChecker.DoCheckAsync(item.Id);
+                    P.MarketRefresh.DoCheckAsync(item.Id);
                 }
             }
         }
