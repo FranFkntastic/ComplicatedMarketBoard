@@ -36,6 +36,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
     public MarketRefreshService MarketRefresh { get; set; } = null!;
     public UniversalisClient Universalis { get; set; } = null!;
     public WorldTravelService WorldTravel { get; set; } = null!;
+    public Integrations.Mmf.MarketContextIpcProvider MarketContextIpc { get; set; } = null!;
 
     // WINDOWS
     public ConfigWindow ConfigWindow { get; init; }
@@ -95,6 +96,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         HoverSearch = new HoverSearchService();
         MarketRefresh = new MarketRefreshService();
         WorldTravel = new WorldTravelService();
+        MarketContextIpc = new Integrations.Mmf.MarketContextIpcProvider();
 
 
         // WINDOWS
@@ -130,6 +132,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         HoverSearch.Dispose();
         MarketRefresh.Dispose();
         Universalis.Dispose();
+        MarketContextIpc.Dispose();
 
         // unload windows
         ConfigWindow.Dispose();
