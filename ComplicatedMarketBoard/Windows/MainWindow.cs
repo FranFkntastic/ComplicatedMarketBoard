@@ -1273,6 +1273,20 @@ public partial class MainWindow : Window, IDisposable
 
     private void DrawMmfBuyButton()
     {
+        var available = false;
+        try
+        {
+            available = Service.PluginInterface
+                .GetIpcSubscriber<bool>("MarketMafioso.IsRemoteMarketAvailable")
+                .InvokeFunc();
+        }
+        catch
+        {
+            available = false;
+        }
+        if (!available)
+            return;
+
         ImGui.PushFont(UiBuilder.IconFont);
         if (ImGui.Button($"{(char)FontAwesomeIcon.ShoppingCart}", new Vector2(P.Config.ButtonSizeOffset[0], ImGui.GetItemRectSize().Y)))
         {
@@ -1281,7 +1295,7 @@ public partial class MainWindow : Window, IDisposable
                 var accepted = Service.PluginInterface
                     .GetIpcSubscriber<uint, uint?, bool>("MarketMafioso.OpenRemoteMarket")
                     .InvokeFunc((uint)CurrentItem.Id, null);
-                mmfBuyNote = accepted ? null : "MarketMafioso is present but its remote market is locked.";
+                mmfBuyNote = accepted ? null : "MarketMafioso could not open the remote market for this item.";
             }
             catch
             {
