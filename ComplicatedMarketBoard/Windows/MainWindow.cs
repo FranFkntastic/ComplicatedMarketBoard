@@ -281,6 +281,11 @@ public partial class MainWindow : Window, IDisposable
         // config button
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() - 0.2f * spacing.X);
         DrawConfigButton();
+        ImGui.SameLine();
+
+        // MMF remote market buy button
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() - 0.2f * spacing.X);
+        DrawMmfBuyButton();
 
         ImGui.EndChild();
 
@@ -1262,6 +1267,30 @@ public partial class MainWindow : Window, IDisposable
             P.DrawConfigUI();
         }
         ImGui.PopFont();
+    }
+
+    private string? mmfBuyNote;
+
+    private void DrawMmfBuyButton()
+    {
+        ImGui.PushFont(UiBuilder.IconFont);
+        if (ImGui.Button($"{(char)FontAwesomeIcon.ShoppingCart}", new Vector2(P.Config.ButtonSizeOffset[0], ImGui.GetItemRectSize().Y)))
+        {
+            try
+            {
+                var accepted = Service.PluginInterface
+                    .GetIpcSubscriber<uint, uint?, bool>("MarketMafioso.OpenRemoteMarket")
+                    .InvokeFunc((uint)CurrentItem.Id, null);
+                mmfBuyNote = accepted ? null : "MarketMafioso is present but its remote market is locked.";
+            }
+            catch
+            {
+                mmfBuyNote = "MarketMafioso is not available.";
+            }
+        }
+        ImGui.PopFont();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(mmfBuyNote ?? "Open this item in MarketMafioso Remote Market to buy it here.");
     }
 
     private void DrawWorldOutdated(Vector2 spacing, float rightColTableWidth)
