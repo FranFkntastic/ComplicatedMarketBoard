@@ -41,14 +41,6 @@ public partial class MainWindow : Window, IDisposable
         Size = new Vector2(350, 450);
         SizeCondition = ImGuiCond.FirstUseEver;
 
-        TitleBarButtons.Add(new TitleBarButton
-        {
-            Icon = Dalamud.Interface.FontAwesomeIcon.ChartLine,
-            IconOffset = new Vector2(2.5f, 1.5f),
-            ShowTooltip = () => ImGui.SetTooltip(chartsTabActive ? "Show market data" : "Show charts"),
-            Click = _ => chartsTabActive = !chartsTabActive,
-        });
-
         CurrentItem.Id = 4691;
         CurrentItem.InGame = Data.ItemSheet.GetRow(4691)!;
         CurrentItemLabel = "(/ω＼)";
@@ -207,7 +199,7 @@ public partial class MainWindow : Window, IDisposable
         // -------------------------------- [  column left  ] --------------------------------
         ImGui.BeginChild("col_left", new Vector2(LeftColWidth, 0), false, ImGuiWindowFlags.NoScrollbar);
 
-        if (chartsTabActive)
+        if (chartsTabActive && !P.Config.ChartsDetached)
         {
             DrawChartsTab();
             ImGui.EndChild();
@@ -295,6 +287,11 @@ public partial class MainWindow : Window, IDisposable
         // config button
         ImGui.SetCursorPosX(ImGui.GetCursorPosX() - 0.2f * spacing.X);
         DrawConfigButton();
+        ImGui.SameLine();
+
+        // charts toggle button
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() - 0.2f * spacing.X);
+        DrawChartsToggleButton();
         ImGui.SameLine();
 
         // MMF remote market buy button

@@ -21,15 +21,43 @@ public class ChartsWindow : Window, IDisposable
 
     public void Dispose() { }
 
+    public override void PreDraw()
+    {
+        Flags = P.Config.ChartsChinCollapsed
+            ? ImGuiWindowFlags.NoTitleBar | ImGuiWindowFlags.NoCollapse
+            : ImGuiWindowFlags.None;
+    }
+
     public override void Draw()
     {
-        if (ImGui.SmallButton("Dock charts into the main window"))
+        if (P.Config.ChartsChinCollapsed)
         {
-            P.Config.ChartsDetached = false;
-            P.Config.Save();
-            IsOpen = false;
+            if (ImGui.BeginPopupContextWindow("charts-chin-context"))
+            {
+                if (ImGui.Selectable("Show title bar"))
+                {
+                    P.Config.ChartsChinCollapsed = false;
+                    P.Config.Save();
+                }
+                ImGui.EndPopup();
+            }
         }
-        ImGui.Separator();
+        else
+        {
+            if (ImGui.SmallButton("Hide title bar"))
+            {
+                P.Config.ChartsChinCollapsed = true;
+                P.Config.Save();
+            }
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Dock charts into the main window"))
+            {
+                P.Config.ChartsDetached = false;
+                P.Config.Save();
+                IsOpen = false;
+            }
+            ImGui.Separator();
+        }
         mainWindow.DrawCharts();
     }
 }

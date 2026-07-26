@@ -21,20 +21,20 @@ public partial class MainWindow
 
     private bool chartsTabActive;
 
-    private void DrawChartsTab()
+    private void DrawChartsToggleButton()
     {
         if (P.Config.ChartsDetached)
-        {
-            ImGui.TextDisabled("Charts are detached into their own window.");
-            if (ImGui.SmallButton("Dock charts into the main window"))
-            {
-                P.Config.ChartsDetached = false;
-                P.Config.Save();
-                P.ChartsWindow.IsOpen = false;
-            }
             return;
-        }
+        ImGui.PushFont(UiBuilder.IconFont);
+        if (ImGui.Button($"{(char)FontAwesomeIcon.ChartLine}", new Vector2(P.Config.ButtonSizeOffset[0], ImGui.GetItemRectSize().Y)))
+            chartsTabActive = !chartsTabActive;
+        ImGui.PopFont();
+        if (ImGui.IsItemHovered())
+            ImGui.SetTooltip(chartsTabActive ? "Show market data" : "Show charts");
+    }
 
+    private void DrawChartsTab()
+    {
         if (ImGui.SmallButton("Detach charts"))
         {
             P.Config.ChartsDetached = true;

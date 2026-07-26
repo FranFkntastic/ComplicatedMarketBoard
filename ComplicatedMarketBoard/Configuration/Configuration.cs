@@ -62,6 +62,7 @@ public class ComplicatedMarketBoardConfig : IMioConfig
     public float NumbersAlignRightOffset = -4.0f;
     public bool EnableRecentHistory = true;
     public bool ChartsDetached = false;
+    public bool ChartsChinCollapsed = false;
     public int soldTableOffset = 25;
     public float spaceBetweenTables = 0;
 
