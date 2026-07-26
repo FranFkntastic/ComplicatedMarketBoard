@@ -200,6 +200,15 @@ public partial class MainWindow : Window, IDisposable
         // -------------------------------- [  column left  ] --------------------------------
         ImGui.BeginChild("col_left", new Vector2(LeftColWidth, 0), false, ImGuiWindowFlags.NoScrollbar);
 
+        DrawMainPaneTabStrip();
+
+        if (chartsTabActive)
+        {
+            DrawChartsTab();
+            ImGui.EndChild();
+            return;
+        }
+
         // icon and name
         if (CurrentItem.Id > 0)
         {
@@ -242,11 +251,7 @@ public partial class MainWindow : Window, IDisposable
         // price table
         if (CurrentItem.Id > 0)
         {
-            var availableHeight = ImGui.GetContentRegionAvail().Y;
-        var chartsHeight = availableHeight > MinimumChartableHeight ? ChartsHeight : 0f;
-        DrawPriceTables(availableHeight - chartsHeight);
-        if (chartsHeight > 0)
-            DrawCharts();
+            DrawPriceTables(ImGui.GetContentRegionAvail().Y);
         }
 
         ImGui.EndChild();

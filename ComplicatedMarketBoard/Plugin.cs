@@ -42,6 +42,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
     public ConfigWindow ConfigWindow { get; init; }
     public CustomScopeWindow CustomScopeWindow { get; init; }
     public MainWindow MainWindow { get; init; }
+    public ChartsWindow ChartsWindow { get; init; }
     public WindowSystem WindowSystem = new("ComplicatedMarketBoard");
 
 
@@ -104,9 +105,11 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         ConfigWindow = new ConfigWindow();
         CustomScopeWindow = new CustomScopeWindow();
         MainWindow = new MainWindow();
+        ChartsWindow = new ChartsWindow(MainWindow);
         WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(CustomScopeWindow);
         WindowSystem.AddWindow(MainWindow);
+        WindowSystem.AddWindow(ChartsWindow);
 
 
         // HANDLERS
@@ -138,6 +141,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         ConfigWindow.Dispose();
         CustomScopeWindow.Dispose();
         MainWindow.Dispose();
+        ChartsWindow.Dispose();
 
         // unload event handlers
         Service.PluginInterface.UiBuilder.Draw -= DrawUI;

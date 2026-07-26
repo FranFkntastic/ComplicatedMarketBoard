@@ -1,14 +1,12 @@
 using Dalamud.Bindings.ImGui;
 using ComplicatedMarketBoard.Integrations.Universalis;
 using Franthropy.Dalamud.UI.Plots;
+using Miosuke.Configuration;
 
 namespace ComplicatedMarketBoard.Windows;
 
 public partial class MainWindow
 {
-    private const float ChartsHeight = 250f;
-    private const float MinimumChartableHeight = ChartsHeight + (2 * MinimumTableHeight) + 40f;
-
     private readonly DalamudPlotRenderer plotRenderer = new();
 
     private static readonly PlotColor NqSeriesColor = new(.45f, .62f, .92f);
@@ -21,18 +19,59 @@ public partial class MainWindow
     private static readonly PlotAxis GilAxis = new("gil", "p", 5, value => value.ToString("N0"));
     private static readonly PlotAxis UnitAxis = new("units", null, 4, value => value.ToString("N0"));
 
-    private void DrawCharts()
+    private bool chartsTabActive;
+
+    private void DrawMainPaneTabStrip()
+    {
+        if (ImGui.BeginTabBar("##cmb-main-pane-tabs", ImGuiTabBarFlags.None))
+        {
+            if (ImGui.BeginTabItem("Market Data"))
+            {
+                chartsTabActive = false;
+                ImGui.EndTabItem();
+            }
+            if (ImGui.BeginTabItem("Charts"))
+            {
+                chartsTabActive = true;
+                ImGui.EndTabItem();
+            }
+            ImGui.EndTabBar();
+        }
+    }
+
+    private void DrawChartsTab()
+    {
+        if (P.Config.ChartsDetached)
+        {
+            ImGui.TextDisabled("Charts are detached into their own window.");
+            if (ImGui.SmallButton("Dock charts into the main window"))
+            {
+                P.Config.ChartsDetached = false;
+                P.Config.Save();
+                P.ChartsWindow.IsOpen = false;
+            }
+            return;
+        }
+
+        if (ImGui.SmallButton("Detach charts"))
+        {
+            P.Config.ChartsDetached = true;
+            P.Config.Save();
+            P.ChartsWindow.IsOpen = true;
+            return;
+        }
+        ImGui.Separator();
+        DrawCharts();
+    }
+
+    public void DrawCharts()
     {
         var entries = CurrentItem.UniversalisResponse.Entries;
         if (entries.Count < 2)
         {
-            if (ImGui.CollapsingHeader("Charts##cmb-charts"))
-                ImGui.TextDisabled("Not enough sale history to chart.");
+            ImGui.TextDisabled("Not enough sale history to chart.");
             return;
         }
-
-        if (!ImGui.CollapsingHeader("Charts##cmb-charts"))
-            return;
 
         var ordered = entries.OrderBy(entry => entry.Timestamp).ToArray();
         var xDomain = new PlotRange(ordered.First().Timestamp, ordered.Last().Timestamp);
@@ -69,7 +108,7 @@ public partial class MainWindow
             TimeAxis,
             GilAxis,
             layers);
-        plotRenderer.Draw("PriceHistory", spec, new System.Numerics.Vector2(0, 140));
+        plotRenderer.Draw("PriceHistory", spec, new System.Numerics.Vector2(0, 0.55f * ImGui.GetContentRegionAvail().Y));
         ImGui.TextDisabled("Price per unit — NQ blue, HQ gold, rule = current cheapest");
     }
 
@@ -88,7 +127,7 @@ public partial class MainWindow
             [
                 new PlotStepLayer("volume", ordered.Select(ToVolumeDatum).ToArray(), new PlotLineStyle(VolumeSeriesColor)),
             ]);
-        plotRenderer.Draw("VolumeHistory", spec, new System.Numerics.Vector2(0, 90));
+        plotRenderer.Draw("VolumeHistory", spec, new System.Numerics.Vector2(0, 0.5f * ImGui.GetContentRegionAvail().Y));
         ImGui.TextDisabled("Units moved per sale");
     }
 
