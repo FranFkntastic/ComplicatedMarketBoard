@@ -7,6 +7,7 @@ namespace ComplicatedMarketBoard.Windows;
 public partial class MainWindow
 {
     private const float ChartsHeight = 250f;
+    private const float MinimumChartableHeight = ChartsHeight + (2 * MinimumTableHeight) + 40f;
 
     private readonly DalamudPlotRenderer plotRenderer = new();
 

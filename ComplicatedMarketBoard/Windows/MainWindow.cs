@@ -242,8 +242,11 @@ public partial class MainWindow : Window, IDisposable
         // price table
         if (CurrentItem.Id > 0)
         {
-            DrawPriceTables(ImGui.GetContentRegionAvail().Y - ChartsHeight);
-        DrawCharts();
+            var availableHeight = ImGui.GetContentRegionAvail().Y;
+        var chartsHeight = availableHeight > MinimumChartableHeight ? ChartsHeight : 0f;
+        DrawPriceTables(availableHeight - chartsHeight);
+        if (chartsHeight > 0)
+            DrawCharts();
         }
 
         ImGui.EndChild();
