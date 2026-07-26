@@ -21,24 +21,6 @@ public partial class MainWindow
 
     private bool chartsTabActive;
 
-    private void DrawMainPaneTabStrip()
-    {
-        if (ImGui.BeginTabBar("##cmb-main-pane-tabs", ImGuiTabBarFlags.None))
-        {
-            if (ImGui.BeginTabItem("Market Data"))
-            {
-                chartsTabActive = false;
-                ImGui.EndTabItem();
-            }
-            if (ImGui.BeginTabItem("Charts"))
-            {
-                chartsTabActive = true;
-                ImGui.EndTabItem();
-            }
-            ImGui.EndTabBar();
-        }
-    }
-
     private void DrawChartsTab()
     {
         if (P.Config.ChartsDetached)
