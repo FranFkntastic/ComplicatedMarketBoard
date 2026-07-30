@@ -93,6 +93,7 @@ public partial class MainWindow : Window, IDisposable
         CurrentItemIcon = Service.Texture.GetFromGameIcon(new GameIconLookup(CurrentItem.InGame.Icon))!;
         CurrentItem.Name = CurrentItem.InGame.Name.ToString();
         CurrentItemLabel = CurrentItem.Name;
+        RebuildMarketDataProjections();
     }
 
     public string lastSelectedWorld = "";
@@ -109,6 +110,9 @@ public partial class MainWindow : Window, IDisposable
     private bool listingSortDescending;
     private HistorySortColumn historySortColumn = HistorySortColumn.Date;
     private bool historySortDescending = true;
+    private IReadOnlyList<MarketDataListing> sortedListings = Array.Empty<MarketDataListing>();
+    private IReadOnlyList<MarketDataEntry> sortedHistory = Array.Empty<MarketDataEntry>();
+    private string cachedMarketFreshnessTooltip = "No freshness data was returned for this item.";
 
     public int LoadingQueue = 0;
     public bool RefreshInProgress { get; private set; }
@@ -577,6 +581,7 @@ public partial class MainWindow : Window, IDisposable
             else
             {
                 P.Config.FilterHq = !P.Config.FilterHq;
+                RebuildMarketDataProjections();
             }
         }
         ImGui.PopStyleColor();
@@ -941,11 +946,13 @@ public partial class MainWindow : Window, IDisposable
         if (listingSortColumn == column)
         {
             listingSortDescending = !listingSortDescending;
+            RebuildMarketDataProjections();
             return;
         }
 
         listingSortColumn = column;
         listingSortDescending = false;
+        RebuildMarketDataProjections();
     }
 
     private void SetHistorySortColumn(HistorySortColumn column)
@@ -953,11 +960,13 @@ public partial class MainWindow : Window, IDisposable
         if (historySortColumn == column)
         {
             historySortDescending = !historySortDescending;
+            RebuildMarketDataProjections();
             return;
         }
 
         historySortColumn = column;
         historySortDescending = column == HistorySortColumn.Date;
+        RebuildMarketDataProjections();
     }
 
     private void DrawListingSortHeader(string label, ListingSortColumn column)
@@ -1002,7 +1011,7 @@ public partial class MainWindow : Window, IDisposable
         DrawHistorySortHeader("Buyer", HistorySortColumn.Buyer);
     }
 
-    private List<MarketDataListing> GetSortedListings()
+    private void RebuildMarketDataProjections()
     {
         var listings = CurrentItem.UniversalisResponse.Listings.AsEnumerable();
         if (P.Config.FilterHq)
@@ -1030,11 +1039,7 @@ public partial class MainWindow : Window, IDisposable
             _ => listings,
         };
 
-        return listings.ToList();
-    }
-
-    private List<MarketDataEntry> GetSortedHistory()
-    {
+        sortedListings = listings.ToArray();
         var entries = CurrentItem.UniversalisResponse.Entries.AsEnumerable();
         if (P.Config.FilterHq)
         {
@@ -1061,7 +1066,9 @@ public partial class MainWindow : Window, IDisposable
             _ => entries,
         };
 
-        return entries.ToList();
+        sortedHistory = entries.ToArray();
+        cachedMarketFreshnessTooltip = BuildMarketFreshnessTooltip();
+        RebuildChartSnapshot();
     }
 
     private void DrawCurrentListingTable(float height)
@@ -1082,7 +1089,7 @@ public partial class MainWindow : Window, IDisposable
 
             DrawListingHeaderRow();
 
-            var marketDataListings = GetSortedListings();
+            var marketDataListings = sortedListings;
 
             bool isColourPushed;
             for (var index = 0; index < marketDataListings.Count; index++)
@@ -1181,7 +1188,7 @@ public partial class MainWindow : Window, IDisposable
 
             DrawHistoryHeaderRow();
 
-            var marketDataEntries = GetSortedHistory();
+            var marketDataEntries = sortedHistory;
 
             for (var index = 0; index < marketDataEntries.Count; index++)
             {

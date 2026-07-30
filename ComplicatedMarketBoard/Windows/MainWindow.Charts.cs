@@ -20,6 +20,7 @@ public partial class MainWindow
     private static readonly PlotAxis UnitAxis = new("units", null, 4, value => value.ToString("N0"));
 
     private bool chartsTabActive;
+    private MarketChartSnapshot? chartSnapshot;
 
     private void DrawChartsToggleButton()
     {
@@ -48,10 +49,30 @@ public partial class MainWindow
 
     public void DrawCharts()
     {
+        if (chartSnapshot is null)
+        {
+            ImGui.TextDisabled("Not enough sale history to chart.");
+            return;
+        }
+
+        if (chartSnapshot.Price is { } price)
+        {
+            plotRenderer.Draw("PriceHistory", price, new Vector2(0, 0.55f * ImGui.GetContentRegionAvail().Y));
+            ImGui.TextDisabled("Price per unit - NQ blue, HQ gold, rule = current cheapest");
+        }
+        if (chartSnapshot.Volume is { } volume)
+        {
+            plotRenderer.Draw("VolumeHistory", volume, new Vector2(0, 0.5f * ImGui.GetContentRegionAvail().Y));
+            ImGui.TextDisabled("Units moved per sale");
+        }
+    }
+
+    private void RebuildChartSnapshot()
+    {
         var entries = CurrentItem.UniversalisResponse.Entries;
         if (entries.Count < 2)
         {
-            ImGui.TextDisabled("Not enough sale history to chart.");
+            chartSnapshot = null;
             return;
         }
 
@@ -60,17 +81,18 @@ public partial class MainWindow
         if (xDomain.Maximum <= xDomain.Minimum)
             xDomain = new(xDomain.Minimum, xDomain.Minimum + 1);
 
-        DrawPriceChart(ordered, xDomain);
-        DrawVolumeChart(ordered, xDomain);
+        chartSnapshot = new(
+            BuildPriceChart(ordered, xDomain),
+            BuildVolumeChart(ordered, xDomain));
     }
 
-    private void DrawPriceChart(MarketDataEntry[] ordered, PlotRange xDomain)
+    private PlotSpec? BuildPriceChart(MarketDataEntry[] ordered, PlotRange xDomain)
     {
         var nq = ordered.Where(entry => !entry.Hq).Select(ToDatum).ToArray();
         var hq = ordered.Where(entry => entry.Hq).Select(ToDatum).ToArray();
         var maxPrice = ordered.Max(entry => (double)entry.PricePerUnit);
         if (maxPrice <= 0)
-            return;
+            return null;
 
         var layers = new List<IPlotLayer>();
         if (nq.Length > 1)
@@ -83,24 +105,22 @@ public partial class MainWindow
         if (cheapest > 0)
             layers.Add(new PlotRuleLayer("price-now", PlotRuleOrientation.Horizontal, cheapest, new PlotLineStyle(RuleColor), "now"));
 
-        var spec = new PlotSpec(
+        return new PlotSpec(
             "cmb-price",
             xDomain,
             new PlotRange(0, maxPrice * 1.05),
             TimeAxis,
             GilAxis,
             layers);
-        plotRenderer.Draw("PriceHistory", spec, new System.Numerics.Vector2(0, 0.55f * ImGui.GetContentRegionAvail().Y));
-        ImGui.TextDisabled("Price per unit — NQ blue, HQ gold, rule = current cheapest");
     }
 
-    private void DrawVolumeChart(MarketDataEntry[] ordered, PlotRange xDomain)
+    private static PlotSpec? BuildVolumeChart(MarketDataEntry[] ordered, PlotRange xDomain)
     {
         var maxVolume = ordered.Max(entry => (double)entry.Quantity);
         if (maxVolume <= 0)
-            return;
+            return null;
 
-        var spec = new PlotSpec(
+        return new PlotSpec(
             "cmb-volume",
             xDomain,
             new PlotRange(0, maxVolume * 1.05),
@@ -109,8 +129,6 @@ public partial class MainWindow
             [
                 new PlotStepLayer("volume", ordered.Select(ToVolumeDatum).ToArray(), new PlotLineStyle(VolumeSeriesColor)),
             ]);
-        plotRenderer.Draw("VolumeHistory", spec, new System.Numerics.Vector2(0, 0.5f * ImGui.GetContentRegionAvail().Y));
-        ImGui.TextDisabled("Units moved per sale");
     }
 
     private static PlotDatum ToDatum(MarketDataEntry entry) =>
@@ -126,4 +144,6 @@ public partial class MainWindow
             entry.Timestamp,
             entry.Quantity,
             []);
+
+    private sealed record MarketChartSnapshot(PlotSpec? Price, PlotSpec? Volume);
 }

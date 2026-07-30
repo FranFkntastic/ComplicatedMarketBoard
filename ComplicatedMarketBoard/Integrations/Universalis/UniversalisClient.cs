@@ -57,6 +57,13 @@ public sealed class UniversalisClient
         return await GetData(gameItem, cancellationToken, reportProgress);
     }
 
+    public Task<UniversalisResponse> GetDataForTargetAsync(
+        MarketItem gameItem,
+        string targetName,
+        bool highQualityOnly,
+        CancellationToken cancellationToken) =>
+        GetDataForTarget(gameItem, targetName, cancellationToken, null, highQualityOnly);
+
     private async Task<UniversalisResponse> GetData(
         MarketItem gameItem,
         CancellationToken cancellationToken,
@@ -167,12 +174,13 @@ public sealed class UniversalisClient
         MarketItem gameItem,
         string targetName,
         CancellationToken cancellationToken,
-        Action<UniversalisRequestProgress>? reportProgress)
+        Action<UniversalisRequestProgress>? reportProgress,
+        bool? highQualityOnly = null)
     {
         await requestGate.WaitAsync(cancellationToken);
         try
         {
-            var _hq = P.Config.UniversalisHqOnly ? "&hq=1" : "";
+            var _hq = (highQualityOnly ?? P.Config.UniversalisHqOnly) ? "&hq=1" : "";
             var targetRegion = P.MainWindow.ScopeCatalog.NormalizeForUniversalis(targetName);
             var API_URL = new UriBuilder($"{Host}/api/v2/{targetRegion}/{gameItem.Id}?listings={P.Config.UniversalisListings}&entries={P.Config.UniversalisEntries}{_hq}").Uri.ToString();
 
@@ -447,7 +455,10 @@ public sealed class UniversalisClient
             Entries = data.Entries,
             ScopeName = targetName,
         };
-        Service.Log.Debug($"[Universalis] UniversalisResponse: {JsonSerializer.Serialize(universalisResponse)}");
+        Service.Log.Debug(
+            $"[Universalis] Response {gameItem.Id} for {targetName}: " +
+            $"{universalisResponse.Listings.Count} listings, {universalisResponse.Entries.Count} sales, " +
+            $"latest upload {universalisResponse.LatestUploadTime}.");
 
         return universalisResponse;
     }
