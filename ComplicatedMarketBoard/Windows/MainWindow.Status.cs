@@ -101,8 +101,14 @@ public partial class MainWindow
     }
 
     private string GetMarketFreshnessTooltip()
+        => cachedMarketFreshnessTooltip;
+
+    private string BuildMarketFreshnessTooltip()
     {
         var response = CurrentItem.UniversalisResponse;
+        if (response.WorldOutOfDate.Count == 0)
+            return "No freshness data was returned for this item.";
+
         var freshness = response.WorldOutOfDate.OrderByDescending(w => w.Value).ToList();
         var newest = freshness.MinBy(w => w.Value);
         var oldest = freshness.MaxBy(w => w.Value);
