@@ -71,11 +71,11 @@ public class MarketDataListing
     [JsonPropertyName("isCrafted")]
     public bool IsCrafted { get; set; }
 
-    // /// <summary>
-    // /// Gets or sets the ID of the listing.
-    // /// </summary>
-    // [JsonPropertyName("listingID")]
-    // public string ListingId { get; set; }
+    /// <summary>
+    /// Gets or sets the Universalis identity of the listing.
+    /// </summary>
+    [JsonPropertyName("listingID")]
+    public string? ListingId { get; set; }
 
     /// <summary>
     /// Gets or sets the list of the materias.

@@ -146,8 +146,8 @@ public sealed class UniversalisClient
             Velocity = responses.Sum(response => response.Velocity),
             VelocityNq = responses.Sum(response => response.VelocityNq),
             VelocityHq = responses.Sum(response => response.VelocityHq),
-            Listings = responses
-                .SelectMany(response => response.Listings)
+            Listings = MarketListingNormalizer.Normalize(
+                    responses.SelectMany(response => response.Listings))
                 .OrderBy(listing => listing.PricePerUnit)
                 .ThenBy(listing => listing.Quantity)
                 .Take(P.Config.UniversalisListings)
@@ -451,7 +451,7 @@ public sealed class UniversalisClient
             Velocity = data.Velocity,
             VelocityNq = data.VelocityNq,
             VelocityHq = data.VelocityHq,
-            Listings = data.Listings,
+            Listings = MarketListingNormalizer.Normalize(data.Listings).ToList(),
             Entries = data.Entries,
             ScopeName = targetName,
         };
