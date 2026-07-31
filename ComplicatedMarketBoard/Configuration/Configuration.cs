@@ -2,6 +2,7 @@ using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Text;
 using Miosuke.Configuration;
 using ComplicatedMarketBoard.Market;
+using Franthropy.Dalamud.UI.Seasonal;
 
 
 namespace ComplicatedMarketBoard.Configuration;
@@ -58,6 +59,7 @@ public class ComplicatedMarketBoardConfig : IMioConfig
     // -------------------------------- UI --------------------------------
     public bool EnableTheme = true;
     public string CustomTheme = "";
+    public HolidaySpiritMode HolidaySpirit = HolidaySpiritMode.Seasonal;
     public bool NumbersAlignRight = true;
     public float NumbersAlignRightOffset = -4.0f;
     public bool EnableRecentHistory = true;

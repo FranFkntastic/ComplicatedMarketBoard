@@ -146,14 +146,16 @@ public partial class MainWindow : Window, IDisposable
 
     private sealed record ItemSearchResult(uint Id, string Name);
 
-    public void BeginMarketDataRefresh(string itemName)
+    public void BeginMarketDataRefresh(
+        string itemName,
+        string? statusText = null)
     {
         RefreshInProgress = true;
         RefreshStartedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         RefreshCompletedAt = 0;
         RefreshProgress = 0.10f;
         RefreshErrorText = "";
-        RefreshStatusText = $"Preparing market request for {itemName}";
+        RefreshStatusText = statusText ?? $"Preparing market request for {itemName}";
     }
 
     public void UpdateMarketDataRefresh(string statusText, float progress)
@@ -162,22 +164,26 @@ public partial class MainWindow : Window, IDisposable
         RefreshProgress = Math.Clamp(progress, 0.0f, 0.95f);
     }
 
-    public void CompleteMarketDataRefresh(string itemName)
+    public void CompleteMarketDataRefresh(
+        string itemName,
+        string? statusText = null)
     {
         RefreshInProgress = false;
         RefreshCompletedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         RefreshProgress = 1.0f;
         RefreshErrorText = "";
-        RefreshStatusText = $"Market data refreshed for {itemName}";
+        RefreshStatusText = statusText ?? $"Market data refreshed for {itemName}";
     }
 
-    public void FailMarketDataRefresh(string errorText)
+    public void FailMarketDataRefresh(
+        string errorText,
+        string? statusText = null)
     {
         RefreshInProgress = false;
         RefreshCompletedAt = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         RefreshProgress = 1.0f;
         RefreshErrorText = errorText;
-        RefreshStatusText = $"Market refresh failed: {errorText}";
+        RefreshStatusText = statusText ?? $"Market refresh failed: {errorText}";
     }
 
     public void ShowCachedMarketData(string itemName)

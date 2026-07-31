@@ -12,6 +12,7 @@ public class UniversalisResponseStatus
     public const ulong ServerError = 1;
     public const ulong InvalidData = 2;
     public const ulong UserCancellation = 3;
+    public const ulong StaleData = 4;
     public const ulong UnknownError = 99;
 }
 

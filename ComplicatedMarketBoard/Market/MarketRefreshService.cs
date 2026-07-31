@@ -103,7 +103,7 @@ public sealed class MarketRefreshService
             gameItem.VendorSelling = gameItem.InGame.PriceMid;
         }
 
-        await CheckGameItemAsync(request, gameItem);
+        await CheckGameItemAsync(request, gameItem, requireCurrentDetails: false);
     }
 
     public void DoCheckRefreshAsync(MarketItem gameItem)
@@ -116,7 +116,7 @@ public sealed class MarketRefreshService
             try
             {
                 Interlocked.Increment(ref P.MainWindow.LoadingQueue);
-                await CheckGameItemAsync(request, gameItem);
+                await CheckGameItemAsync(request, gameItem, requireCurrentDetails: true);
             }
             catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { }
             catch (Exception ex)
@@ -137,7 +137,10 @@ public sealed class MarketRefreshService
     }
 
 
-    private async Task CheckGameItemAsync(RequestContext request, MarketItem gameItem)
+    private async Task CheckGameItemAsync(
+        RequestContext request,
+        MarketItem gameItem,
+        bool requireCurrentDetails)
     {
         request.Cancellation.Token.ThrowIfCancellationRequested();
         if (!IsCurrent(request))
@@ -147,8 +150,12 @@ public sealed class MarketRefreshService
         P.MainWindow.CurrentItemIcon = Service.Texture.GetFromGameIcon(new GameIconLookup(gameItem.InGame.Icon))!;
         gameItem.TargetRegion = P.MainWindow.GetSelectedMarketScopeLabel();
         gameItem.FetchTimestamp = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-        P.MainWindow.BeginMarketDataRefresh(gameItem.Name);
-        P.MainWindow.UpdateMarketDataRefresh($"Fetching Universalis data for {gameItem.Name}", 0.35f);
+        var vocabulary = MarketRefreshVocabulary.Create(
+            P.Config.HolidaySpirit,
+            DateOnly.FromDateTime(DateTime.Now));
+        P.MainWindow.BeginMarketDataRefresh(
+            gameItem.Name,
+            vocabulary.Preparing(gameItem.Name));
         var universalisResponse = await P.Universalis.GetDataAsync(
             gameItem,
             request.Cancellation.Token,
@@ -156,12 +163,16 @@ public sealed class MarketRefreshService
             {
                 if (IsCurrent(request))
                     P.MainWindow.UpdateMarketDataRefresh(progress.StatusText, progress.Progress);
-            });
+            },
+            requireCurrentDetails,
+            vocabulary);
         request.Cancellation.Token.ThrowIfCancellationRequested();
         if (!IsCurrent(request))
             return;
 
-        P.MainWindow.UpdateMarketDataRefresh($"Processing market data for {gameItem.Name}", 0.75f);
+        P.MainWindow.UpdateMarketDataRefresh(
+            vocabulary.Processing(gameItem.Name),
+            0.90f);
 
         if (universalisResponse.Status != UniversalisResponseStatus.Success)
         {
@@ -181,7 +192,9 @@ public sealed class MarketRefreshService
                 P.MainWindow.CurrentItemUpdate(gameItem);
             }
 
-            P.MainWindow.FailMarketDataRefresh(failureText);
+            P.MainWindow.FailMarketDataRefresh(
+                failureText,
+                vocabulary.Failure(failureText));
             return;
         }
 
@@ -194,7 +207,9 @@ public sealed class MarketRefreshService
 
         P.MainWindow.CurrentItemUpdate(gameItem);
         SearchHistoryUpdate(gameItem);
-        P.MainWindow.CompleteMarketDataRefresh(gameItem.Name);
+        P.MainWindow.CompleteMarketDataRefresh(
+            gameItem.Name,
+            vocabulary.Confirmed(gameItem.Name));
     }
 
     private static string GetUniversalisFailureText(UniversalisResponse response)
@@ -207,6 +222,7 @@ public sealed class MarketRefreshService
         UniversalisResponseStatus.ServerError => "server error",
         UniversalisResponseStatus.InvalidData => "invalid data",
         UniversalisResponseStatus.UserCancellation => "request timed out",
+        UniversalisResponseStatus.StaleData => "current listing details unavailable",
         UniversalisResponseStatus.UnknownError => "unknown error",
         _ => $"status {status}",
     };
