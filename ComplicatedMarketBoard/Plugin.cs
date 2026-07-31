@@ -13,6 +13,7 @@ using ComplicatedMarketBoard.Configuration;
 using ComplicatedMarketBoard.Market;
 using ComplicatedMarketBoard.Services;
 using ComplicatedMarketBoard.Windows;
+using Franthropy.Dalamud.Observations;
 
 
 namespace ComplicatedMarketBoard;
@@ -37,6 +38,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
     public UniversalisClient Universalis { get; set; } = null!;
     public WorldTravelService WorldTravel { get; set; } = null!;
     public Integrations.Mmf.MarketContextIpcProvider MarketContextIpc { get; set; } = null!;
+    private readonly DalamudSharedObservationHost? sharedObservationHost;
 
     // WINDOWS
     public ConfigWindow ConfigWindow { get; init; }
@@ -49,12 +51,40 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
 
 
 
-    public ComplicatedMarketBoardPlugin(IDalamudPluginInterface pluginInterface)
+    public ComplicatedMarketBoardPlugin(
+        IDalamudPluginInterface pluginInterface,
+        IGameInventory gameInventory,
+        IPlayerState playerState,
+        IAddonLifecycle addonLifecycle,
+        IPluginLog pluginLog)
     {
         // PLUGIN
 
         // dalamud service
         Service.Init(pluginInterface);
+        try
+        {
+            sharedObservationHost = new DalamudSharedObservationHost(new DalamudSharedObservationHostOptions
+            {
+                PluginConfigDirectory = pluginInterface.GetPluginConfigDirectory(),
+                PluginName = Name,
+                PluginInstanceId = Guid.NewGuid().ToString("N"),
+                GameBuild = Franthropy.Dalamud.Diagnostics.GamePatchCompatibilityGate.ReadCurrentGameVersion(),
+                GameInventory = gameInventory,
+                PlayerState = playerState,
+                AddonLifecycle = addonLifecycle,
+                Diagnostic = (message, exception) =>
+                {
+                    if (exception is null) pluginLog.Warning(message);
+                    else pluginLog.Error(exception, message);
+                },
+            });
+            sharedObservationHost.Start();
+        }
+        catch (Exception exception)
+        {
+            pluginLog.Error(exception, "CMB shared-observation hosting is unavailable.");
+        }
         // plugin payload
         PluginPayload = Service.Chat.AddChatLinkHandler(1, pluginPayloadHandler);
         // lib
@@ -136,6 +166,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         MarketRefresh.Dispose();
         Universalis.Dispose();
         MarketContextIpc.Dispose();
+        sharedObservationHost?.Dispose();
 
         // unload windows
         ConfigWindow.Dispose();
