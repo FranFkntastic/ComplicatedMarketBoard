@@ -55,7 +55,7 @@ public partial class MainWindow
     private string GetMarketRefreshStatusText()
     {
         if (!string.IsNullOrWhiteSpace(RefreshErrorText))
-            return $"Market refresh failed: {RefreshErrorText}";
+            return RefreshStatusText;
 
         var response = CurrentItem.UniversalisResponse;
         if (response.Status != UniversalisResponseStatus.Success)
@@ -65,7 +65,10 @@ public partial class MainWindow
             return "Market data not loaded";
 
         var fetchedAgo = FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - response.FetchTime);
-        return $"Market data refreshed {fetchedAgo} ago";
+        var summary = string.IsNullOrWhiteSpace(RefreshStatusText)
+            ? "Market data refreshed"
+            : RefreshStatusText;
+        return $"{summary} · {fetchedAgo} ago";
     }
 
     private string GetMarketDataStatusTooltip()
@@ -139,6 +142,7 @@ public partial class MainWindow
         UniversalisResponseStatus.ServerError => "server error",
         UniversalisResponseStatus.InvalidData => "invalid data",
         UniversalisResponseStatus.UserCancellation => "request timed out",
+        UniversalisResponseStatus.StaleData => "current listing details unavailable",
         UniversalisResponseStatus.UnknownError => "unknown error",
         _ => $"status {status}",
     };

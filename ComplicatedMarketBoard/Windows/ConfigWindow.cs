@@ -12,6 +12,7 @@ using Dalamud.Bindings.ImGui;
 using ComplicatedMarketBoard.Market;
 using ComplicatedMarketBoard.Windows.Controls;
 using Miosuke.Extensions;
+using Franthropy.Dalamud.UI.Seasonal;
 
 
 namespace ComplicatedMarketBoard.Windows;
@@ -597,6 +598,33 @@ public class ConfigWindow : Window, IDisposable
         ImGuiComponents.HelpMarker(
             "Enable: Use a bundled/custom theme (more compact and compatible) for this plugin.\n" +
             "Disable: Use your global Dalamud theme."
+        );
+
+        ImGui.Text("Holiday spirit");
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(150);
+        var holidaySpirit = P.Config.HolidaySpirit;
+        if (ImGui.BeginCombo(
+                $"{suffix}HolidaySpirit",
+                MarketRefreshVocabulary.GetModeLabel(holidaySpirit)))
+        {
+            foreach (var mode in Enum.GetValues<HolidaySpiritMode>())
+            {
+                if (ImGui.Selectable(
+                        MarketRefreshVocabulary.GetModeLabel(mode),
+                        mode == holidaySpirit))
+                {
+                    P.Config.HolidaySpirit = mode;
+                    P.Config.Save();
+                }
+            }
+
+            ImGui.EndCombo();
+        }
+        ImGuiComponents.HelpMarker(
+            "Seasonal: Use Starlight-inspired wording from the Friday after U.S. Thanksgiving through December 31.\n" +
+            "Always: Keep the festivities going year-round.\n" +
+            "Off: Use standard wording."
         );
 
         // CustomTheme
