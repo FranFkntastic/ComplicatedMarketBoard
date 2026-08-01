@@ -16,8 +16,8 @@ public sealed record MarketFreshnessProbe(
 
 public sealed record MarketFreshnessMatch(bool IsCurrent, string Detail)
 {
-    public static MarketFreshnessMatch Current()
-        => new(true, "");
+    public static MarketFreshnessMatch Current(string detail = "")
+        => new(true, detail);
 
     public static MarketFreshnessMatch Stale(string detail)
         => new(false, detail);
@@ -25,12 +25,15 @@ public sealed record MarketFreshnessMatch(bool IsCurrent, string Detail)
 
 public static class MarketFreshnessMatcher
 {
+    public const long UploadRevisionToleranceMilliseconds = 1_000;
+
     public static MarketFreshnessMatch CompareScope(
         IReadOnlyCollection<MarketFreshnessProbe> worldProbes,
         UniversalisResponse detailed,
         bool hqOnly,
         int listingLimit)
     {
+        var acceptedDetails = new List<string>();
         var isTruncated = listingLimit > 0 && detailed.RawListingCount >= listingLimit;
         var cutoffPrice = isTruncated
             ? detailed.RawListingCutoffPrice
@@ -43,13 +46,15 @@ public static class MarketFreshnessMatcher
                 : CompareWorldQuality(probe, probe.Nq, detailed, false, cutoffPrice);
             if (!nqMatch.IsCurrent)
                 return nqMatch;
+            AddAcceptedDetail(acceptedDetails, nqMatch);
 
             var hqMatch = CompareWorldQuality(probe, probe.Hq, detailed, true, cutoffPrice);
             if (!hqMatch.IsCurrent)
                 return hqMatch;
+            AddAcceptedDetail(acceptedDetails, hqMatch);
         }
 
-        return MarketFreshnessMatch.Current();
+        return MarketFreshnessMatch.Current(string.Join(" ", acceptedDetails));
     }
 
     public static MarketFreshnessMatch Compare(
@@ -76,14 +81,22 @@ public static class MarketFreshnessMatcher
             var secondaryHq = !expectedMinimum.Hq;
             if (detailed.Listings.Any(listing => listing.Hq == secondaryHq))
             {
-                return CompareQuality(
+                var secondaryMatch = CompareQuality(
                     probe.TargetName,
                     secondaryHq ? probe.Hq : probe.Nq,
                     detailed,
                     secondaryHq);
+                if (!secondaryMatch.IsCurrent)
+                    return secondaryMatch;
+
+                return MarketFreshnessMatch.Current(
+                    string.Join(
+                        " ",
+                        new[] { primaryMatch.Detail, secondaryMatch.Detail }
+                            .Where(detail => !string.IsNullOrWhiteSpace(detail))));
             }
 
-            return MarketFreshnessMatch.Current();
+            return primaryMatch;
         }
 
         return detailed.Listings.Count == 0
@@ -138,10 +151,11 @@ public static class MarketFreshnessMatcher
         var detailedUploadTime = detailed.WorldUploadTimes.TryGetValue(expected.WorldName, out var uploadTime)
             ? uploadTime
             : 0;
-        return detailedUploadTime >= expected.UploadTime
-            ? MarketFreshnessMatch.Current()
-            : MarketFreshnessMatch.Stale(
-                $"Detailed listings for {expected.WorldName} are older than Universalis's current {qualityLabel} minimum.");
+        return CompareUploadRevision(
+            expected.UploadTime,
+            detailedUploadTime,
+            expected.WorldName,
+            qualityLabel);
     }
 
     private static MarketFreshnessMatch CompareWorldQuality(
@@ -187,10 +201,38 @@ public static class MarketFreshnessMatcher
         var detailedUploadTime = detailed.WorldUploadTimes.TryGetValue(probe.TargetName, out var uploadTime)
             ? uploadTime
             : 0;
-        return detailedUploadTime >= expected.UploadTime
-            ? MarketFreshnessMatch.Current()
-            : MarketFreshnessMatch.Stale(
-                $"Detailed listings for {probe.TargetName} are older than Universalis's current {qualityLabel} minimum.");
+        return CompareUploadRevision(
+            expected.UploadTime,
+            detailedUploadTime,
+            probe.TargetName,
+            qualityLabel);
+    }
+
+    private static MarketFreshnessMatch CompareUploadRevision(
+        long expectedUploadTime,
+        long detailedUploadTime,
+        string worldName,
+        string qualityLabel)
+    {
+        var lagMilliseconds = expectedUploadTime - detailedUploadTime;
+        if (detailedUploadTime <= 0 || lagMilliseconds > UploadRevisionToleranceMilliseconds)
+        {
+            return MarketFreshnessMatch.Stale(
+                $"Detailed listings for {worldName} are older than Universalis's current {qualityLabel} minimum.");
+        }
+
+        return lagMilliseconds > 0
+            ? MarketFreshnessMatch.Current(
+                $"Accepted matching {qualityLabel} listings for {worldName} with {lagMilliseconds:N0}ms upload-revision skew.")
+            : MarketFreshnessMatch.Current();
+    }
+
+    private static void AddAcceptedDetail(
+        ICollection<string> acceptedDetails,
+        MarketFreshnessMatch match)
+    {
+        if (!string.IsNullOrWhiteSpace(match.Detail))
+            acceptedDetails.Add(match.Detail);
     }
 
     private static bool ListingMatchesWorld(

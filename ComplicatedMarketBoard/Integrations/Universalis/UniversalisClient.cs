@@ -16,8 +16,8 @@ public sealed class UniversalisClient
     private const int AggregateMaxAttempts = 4;
     private const int MaxConcurrentRequests = 3;
     private static readonly JsonSerializerOptions UniversalisJsonOptions = new(JsonSerializerDefaults.Web);
-    private static readonly TimeSpan FreshDetailTimeout = TimeSpan.FromSeconds(30);
-    private static readonly TimeSpan FreshDetailRetryDelay = TimeSpan.FromSeconds(2);
+    private static readonly TimeSpan FreshDetailTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan FreshDetailRetryDelay = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan FreshListingRequestTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan FreshListingInitialRetryDelay = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan FreshListingMaximumRetryDelay = TimeSpan.FromSeconds(3);
@@ -471,7 +471,6 @@ public sealed class UniversalisClient
                         attempt);
                     var requestStartedAt = Stopwatch.GetTimestamp();
                     using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
-                    request.Headers.ConnectionClose = true;
                     using var response = await SendRequestAsync(
                         request,
                         AggregateRequestTimeout,
@@ -800,7 +799,6 @@ public sealed class UniversalisClient
                     var requestStartedAtUtc = DateTimeOffset.UtcNow;
                     var requestStartedAt = Stopwatch.GetTimestamp();
                     using var request = new HttpRequestMessage(HttpMethod.Get, API_URL);
-                    request.Headers.ConnectionClose = verificationPass > 0;
                     if (verificationPass > 1)
                     {
                         request.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue

@@ -76,7 +76,7 @@ public sealed class MarketFreshnessMatcherTests
     [Fact]
     public void Compare_RejectsMatchingPriceFromOlderRevision()
     {
-        var probe = Probe(nqPrice: 100, nqUploadTime: 2_000);
+        var probe = Probe(nqPrice: 100, nqUploadTime: 2_001);
         var detailed = Response(new MarketDataListing
         {
             PricePerUnit = 100,
@@ -89,6 +89,79 @@ public sealed class MarketFreshnessMatcherTests
 
         Assert.False(result.IsCurrent);
         Assert.Contains("older", result.Detail);
+    }
+
+    [Fact]
+    public void CompareScope_AcceptsMatchingPriceWithObservedNineMillisecondRevisionSkew()
+    {
+        var probe = new MarketFreshnessProbe(
+            "Siren",
+            new MarketMinimumProbe(false, 1_225_000, 64, "Siren", 1_785_615_927_911),
+            null);
+        var detailed = new UniversalisResponse
+        {
+            Status = UniversalisResponseStatus.Success,
+            Listings =
+            [
+                new MarketDataListing
+                {
+                    PricePerUnit = 1_225_000,
+                    Quantity = 1,
+                    WorldID = 64,
+                    WorldName = "Siren",
+                },
+            ],
+            WorldUploadTimes = new Dictionary<string, long>
+            {
+                ["Siren"] = 1_785_615_927_902,
+            },
+        };
+
+        var result = MarketFreshnessMatcher.CompareScope(
+            [probe],
+            detailed,
+            hqOnly: false,
+            listingLimit: 50);
+
+        Assert.True(result.IsCurrent);
+        Assert.Contains("9ms", result.Detail);
+    }
+
+    [Fact]
+    public void CompareScope_StillRejectsPriceMismatchWithinRevisionTolerance()
+    {
+        var probe = new MarketFreshnessProbe(
+            "Siren",
+            new MarketMinimumProbe(false, 1_225_000, 64, "Siren", 1_785_615_927_911),
+            null);
+        var detailed = new UniversalisResponse
+        {
+            Status = UniversalisResponseStatus.Success,
+            Listings =
+            [
+                new MarketDataListing
+                {
+                    PricePerUnit = 1_350_000,
+                    Quantity = 1,
+                    WorldID = 64,
+                    WorldName = "Siren",
+                },
+            ],
+            WorldUploadTimes = new Dictionary<string, long>
+            {
+                ["Siren"] = 1_785_615_927_902,
+            },
+        };
+
+        var result = MarketFreshnessMatcher.CompareScope(
+            [probe],
+            detailed,
+            hqOnly: false,
+            listingLimit: 50);
+
+        Assert.False(result.IsCurrent);
+        Assert.Contains("1,225,000", result.Detail);
+        Assert.Contains("1,350,000", result.Detail);
     }
 
     [Fact]
