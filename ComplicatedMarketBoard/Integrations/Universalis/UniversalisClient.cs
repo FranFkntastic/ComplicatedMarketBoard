@@ -15,6 +15,7 @@ public sealed class UniversalisClient
     private const int MaxAttempts = 3;
     private const int AggregateMaxAttempts = 4;
     private const int MaxConcurrentRequests = 3;
+    private static readonly JsonSerializerOptions UniversalisJsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan FreshDetailTimeout = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan FreshDetailRetryDelay = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan FreshListingRequestTimeout = TimeSpan.FromSeconds(5);
@@ -30,6 +31,7 @@ public sealed class UniversalisClient
     private readonly SemaphoreSlim requestGate = new(MaxConcurrentRequests, MaxConcurrentRequests);
     private readonly SemaphoreSlim requestStartGate = new(1, 1);
     private readonly object retryStateLock = new();
+    private readonly AsyncLocal<UniversalisFetchDiagnosticSession?> activeDiagnosticSession = new();
     private DateTimeOffset nextRequestAllowedAt = DateTimeOffset.MinValue;
     private DateTimeOffset nextRequestStartAt = DateTimeOffset.MinValue;
 
@@ -78,26 +80,112 @@ public sealed class UniversalisClient
         bool requireCurrentDetails = false,
         MarketRefreshVocabulary? vocabulary = null)
     {
-        return await GetData(
+        return await RunWithDiagnosticsAsync(
             gameItem,
-            cancellationToken,
-            reportProgress,
+            gameItem.TargetRegion,
             requireCurrentDetails,
-            vocabulary ?? MarketRefreshVocabulary.Standard);
+            () => GetData(
+                gameItem,
+                cancellationToken,
+                reportProgress,
+                requireCurrentDetails,
+                vocabulary ?? MarketRefreshVocabulary.Standard));
     }
 
-    public Task<UniversalisResponse> GetDataForTargetAsync(
+    public async Task<UniversalisResponse> GetDataForTargetAsync(
         MarketItem gameItem,
         string targetName,
         bool highQualityOnly,
         CancellationToken cancellationToken) =>
-        GetDataForTarget(
+        await RunWithDiagnosticsAsync(
             gameItem,
             targetName,
-            cancellationToken,
-            null,
-            MarketRefreshVocabulary.Standard,
-            highQualityOnly: highQualityOnly);
+            requireCurrentDetails: false,
+            () => GetDataForTarget(
+                gameItem,
+                targetName,
+                cancellationToken,
+                null,
+                MarketRefreshVocabulary.Standard,
+                highQualityOnly: highQualityOnly),
+            highQualityOnly);
+
+    private async Task<UniversalisResponse> RunWithDiagnosticsAsync(
+        MarketItem gameItem,
+        string requestedScope,
+        bool requireCurrentDetails,
+        Func<Task<UniversalisResponse>> request,
+        bool? highQualityOnly = null)
+    {
+        if (activeDiagnosticSession.Value is not null)
+            return await request();
+
+        var session = new UniversalisFetchDiagnosticSession(
+            gameItem.Id,
+            gameItem.Name,
+            requestedScope,
+            requireCurrentDetails,
+            P.Config.UniversalisListings,
+            P.Config.UniversalisEntries,
+            highQualityOnly ?? P.Config.UniversalisHqOnly);
+        activeDiagnosticSession.Value = session;
+        UniversalisResponse? outcome = null;
+        Exception? failure = null;
+        session.Record(
+            "fetch-started",
+            requestedScope,
+            $"Started Universalis fetch for item {gameItem.Id}; current-details={requireCurrentDetails}.");
+
+        try
+        {
+            outcome = await request();
+            return outcome;
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
+            throw;
+        }
+        finally
+        {
+            activeDiagnosticSession.Value = null;
+            var document = session.Finish(outcome, failure);
+            if (document is not null)
+            {
+                try
+                {
+                    var path = UniversalisFetchDiagnosticWriter.Write(
+                        Service.PluginInterface.GetPluginConfigDirectory(),
+                        document);
+                    Service.Log.Warning(
+                        $"[Universalis] Duplicate listing evidence {session.CorrelationId[..8]} written to {path}");
+                }
+                catch (Exception ex)
+                {
+                    Service.Log.Error(ex, "[Universalis] Failed to write duplicate-listing diagnostic evidence.");
+                }
+            }
+        }
+    }
+
+    private void TraceFetch(
+        string phase,
+        string target,
+        string message,
+        string? requestUri = null,
+        int? attempt = null,
+        int? verificationPass = null,
+        int? statusCode = null,
+        double? durationMilliseconds = null) =>
+        activeDiagnosticSession.Value?.Record(
+            phase,
+            target,
+            message,
+            requestUri,
+            attempt,
+            verificationPass,
+            statusCode,
+            durationMilliseconds);
 
     private async Task<UniversalisResponse> GetData(
         MarketItem gameItem,
@@ -195,6 +283,10 @@ public sealed class UniversalisClient
             worldNames.Add(targetName);
 
         var scanStartedAt = Stopwatch.GetTimestamp();
+        TraceFetch(
+            "aggregate-scan-started",
+            targetName,
+            $"Scanning {worldNames.Count} worlds with concurrency {MaxConcurrentRequests} and {MinimumRequestStartInterval.TotalMilliseconds:F0}ms request spacing.");
         Service.Log.Info(
             $"[Universalis] Aggregate scan started for {targetName}: {worldNames.Count} worlds, " +
             $"concurrency {MaxConcurrentRequests}, {MinimumRequestStartInterval.TotalMilliseconds:F0}ms request spacing.");
@@ -240,6 +332,11 @@ public sealed class UniversalisClient
         Service.Log.Info(
             $"[Universalis] Aggregate scan completed for {targetName}: {resolvedWorldProbes.Length} worlds in " +
             $"{Stopwatch.GetElapsedTime(scanStartedAt).TotalSeconds:F2}s.");
+        TraceFetch(
+            "aggregate-scan-completed",
+            targetName,
+            $"Resolved freshness probes for {resolvedWorldProbes.Length} worlds.",
+            durationMilliseconds: Stopwatch.GetElapsedTime(scanStartedAt).TotalMilliseconds);
 
         var deadline = DateTimeOffset.UtcNow + FreshDetailTimeout;
         var detailAttempt = 0;
@@ -266,10 +363,22 @@ public sealed class UniversalisClient
                 P.Config.UniversalisHqOnly,
                 P.Config.UniversalisListings);
             if (lastMatch.IsCurrent)
+            {
+                TraceFetch(
+                    "detail-verification-accepted",
+                    targetName,
+                    lastMatch.Detail,
+                    verificationPass: detailAttempt);
                 return detailed;
+            }
 
             Service.Log.Warning(
                 $"[Universalis] Detail verification pass {detailAttempt} rejected {targetName}: {lastMatch.Detail}");
+            TraceFetch(
+                "detail-verification-rejected",
+                targetName,
+                lastMatch.Detail,
+                verificationPass: detailAttempt);
 
             var remaining = deadline - DateTimeOffset.UtcNow;
             if (remaining <= TimeSpan.Zero)
@@ -287,9 +396,13 @@ public sealed class UniversalisClient
             reportProgress?.Invoke(new UniversalisRequestProgress(
                 vocabulary.WaitingForListings(detailAttempt + 1, remaining),
                 waitProgress));
-            await Task.Delay(
-                remaining < FreshDetailRetryDelay ? remaining : FreshDetailRetryDelay,
-                cancellationToken);
+            var detailRetryDelay = remaining < FreshDetailRetryDelay ? remaining : FreshDetailRetryDelay;
+            TraceFetch(
+                "detail-verification-wait",
+                targetName,
+                $"Waiting {FormatDelay(detailRetryDelay)} before verification pass {detailAttempt + 1}.",
+                verificationPass: detailAttempt + 1);
+            await Task.Delay(detailRetryDelay, cancellationToken);
         }
 
         async Task<(int Index, string WorldName, MarketFreshnessProbe? Probe, UniversalisResponse? Failure)> FetchWorldProbeAsync(
@@ -350,6 +463,13 @@ public sealed class UniversalisClient
                 try
                 {
                     Service.Log.Info($"[Universalis] Aggregate probe attempt {attempt}/{AggregateMaxAttempts}: {apiUrl}");
+                    TraceFetch(
+                        "aggregate-request-started",
+                        targetName,
+                        $"Aggregate probe attempt {attempt}/{AggregateMaxAttempts} started.",
+                        apiUrl,
+                        attempt);
+                    var requestStartedAt = Stopwatch.GetTimestamp();
                     using var request = new HttpRequestMessage(HttpMethod.Get, apiUrl);
                     request.Headers.ConnectionClose = true;
                     using var response = await SendRequestAsync(
@@ -359,6 +479,14 @@ public sealed class UniversalisClient
                         requestProgress,
                         reportProgress,
                         cancellationToken);
+                    TraceFetch(
+                        "aggregate-response-received",
+                        targetName,
+                        $"Aggregate probe returned HTTP {(int)response.StatusCode} ({response.StatusCode}).",
+                        apiUrl,
+                        attempt,
+                        statusCode: (int)response.StatusCode,
+                        durationMilliseconds: Stopwatch.GetElapsedTime(requestStartedAt).TotalMilliseconds);
                     if (!response.IsSuccessStatusCode)
                     {
                         var failure = CreateServerError(response.StatusCode);
@@ -408,10 +536,27 @@ public sealed class UniversalisClient
                         });
                     }
 
-                    return (BuildFreshnessProbe(targetName, aggregateItem), null);
+                    var probe = BuildFreshnessProbe(targetName, aggregateItem);
+                    var latestUploadTime = Math.Max(
+                        probe.Nq?.UploadTime ?? 0,
+                        probe.Hq?.UploadTime ?? 0);
+                    TraceFetch(
+                        "aggregate-probe-parsed",
+                        targetName,
+                        $"Parsed aggregate upload revision {latestUploadTime}.",
+                        apiUrl,
+                        attempt,
+                        statusCode: (int)response.StatusCode);
+                    return (probe, null);
                 }
                 catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
+                    TraceFetch(
+                        "aggregate-request-timeout",
+                        targetName,
+                        $"Aggregate probe timed out after {AggregateRequestTimeout.TotalSeconds:F0}s.",
+                        apiUrl,
+                        attempt);
                     Service.Log.Warning(
                         $"[Universalis] Aggregate probe for {targetName} timed out on attempt {attempt}/{AggregateMaxAttempts} " +
                         $"after {AggregateRequestTimeout.TotalSeconds:F0}s.");
@@ -441,6 +586,12 @@ public sealed class UniversalisClient
                 }
                 catch (HttpRequestException ex)
                 {
+                    TraceFetch(
+                        "aggregate-request-failed",
+                        targetName,
+                        $"Aggregate probe connection failed: {ex.Message}",
+                        apiUrl,
+                        attempt);
                     if (attempt == AggregateMaxAttempts)
                     {
                         StartFailureCooldown();
@@ -468,6 +619,12 @@ public sealed class UniversalisClient
                 }
                 catch (JsonException ex)
                 {
+                    TraceFetch(
+                        "aggregate-response-invalid",
+                        targetName,
+                        $"Aggregate response JSON was invalid: {ex.Message}",
+                        apiUrl,
+                        attempt);
                     Service.Log.Warning(ex, "[Universalis] Aggregate probe JSON parse failed.");
                     return (null, new UniversalisResponse
                     {
@@ -633,6 +790,15 @@ public sealed class UniversalisClient
                 try
                 {
                     Service.Log.Info($"[Universalis] Fetch attempt {attempt}/{MaxAttempts}: {API_URL}");
+                    TraceFetch(
+                        "detail-request-started",
+                        targetName,
+                        $"Detailed listing attempt {attempt}/{MaxAttempts} started.",
+                        API_URL,
+                        attempt,
+                        verificationPass);
+                    var requestStartedAtUtc = DateTimeOffset.UtcNow;
+                    var requestStartedAt = Stopwatch.GetTimestamp();
                     using var request = new HttpRequestMessage(HttpMethod.Get, API_URL);
                     request.Headers.ConnectionClose = verificationPass > 0;
                     if (verificationPass > 1)
@@ -651,6 +817,16 @@ public sealed class UniversalisClient
                         requestProgress,
                         reportProgress,
                         cancellationToken);
+                    var requestDuration = Stopwatch.GetElapsedTime(requestStartedAt).TotalMilliseconds;
+                    TraceFetch(
+                        "detail-response-received",
+                        targetName,
+                        $"Detailed listing request returned HTTP {(int)response.StatusCode} ({response.StatusCode}).",
+                        API_URL,
+                        attempt,
+                        verificationPass,
+                        (int)response.StatusCode,
+                        requestDuration);
                     if (!response.IsSuccessStatusCode)
                     {
                         var failure = CreateServerError(response.StatusCode);
@@ -680,17 +856,64 @@ public sealed class UniversalisClient
                         continue;
                     }
 
-                    var data = await response.Content.ReadFromJsonAsync<MarketDataCurrent>(cancellationToken: cancellationToken);
+                    var payload = await response.Content.ReadAsByteArrayAsync(cancellationToken);
+                    using var rawPayload = JsonDocument.Parse(payload);
+                    var data = rawPayload.RootElement.Deserialize<MarketDataCurrent>(UniversalisJsonOptions);
                     if (data is null)
                     {
                         Service.Log.Warning($"[Universalis] Parse JSON failed");
                         return new UniversalisResponse { Status = UniversalisResponseStatus.InvalidData, FailureDetail = "Universalis returned no market data." };
                     }
 
-                    return BuildSuccessResponse(data, gameItem, targetName);
+                    var interpretedResponse = BuildSuccessResponse(data, gameItem, targetName);
+                    try
+                    {
+                        activeDiagnosticSession.Value?.CaptureDetailedResponse(
+                            targetName,
+                            API_URL,
+                            attempt,
+                            verificationPass,
+                            requestStartedAtUtc,
+                            requestDuration,
+                            (int)response.StatusCode,
+                            new UniversalisRequestHeaders(
+                                request.Version,
+                                request.Headers.ConnectionClose == true,
+                                request.Headers.CacheControl?.ToString()),
+                            CaptureResponseHeaders(response),
+                            UniversalisFetchDiagnosticSession.ComputeSha256(payload),
+                            rawPayload.RootElement.Clone(),
+                            data,
+                            interpretedResponse);
+                    }
+                    catch (Exception ex)
+                    {
+                        Service.Log.Error(ex, "[Universalis] Failed to capture duplicate-listing diagnostic evidence.");
+                    }
+                    if (interpretedResponse.RawListingCount != interpretedResponse.Listings.Count)
+                    {
+                        TraceFetch(
+                            "duplicate-listings-detected",
+                            targetName,
+                            $"Universalis returned {interpretedResponse.RawListingCount} rows representing {interpretedResponse.Listings.Count} unique listing identities.",
+                            API_URL,
+                            attempt,
+                            verificationPass,
+                            (int)response.StatusCode,
+                            requestDuration);
+                    }
+
+                    return interpretedResponse;
                 }
                 catch (TaskCanceledException) when (!cancellationToken.IsCancellationRequested)
                 {
+                    TraceFetch(
+                        "detail-request-timeout",
+                        targetName,
+                        $"Detailed listing request timed out after {requestTimeout.TotalSeconds:F0}s.",
+                        API_URL,
+                        attempt,
+                        verificationPass);
                     if (attempt == MaxAttempts)
                     {
                         StartFailureCooldown();
@@ -718,6 +941,13 @@ public sealed class UniversalisClient
                 }
                 catch (HttpRequestException ex)
                 {
+                    TraceFetch(
+                        "detail-request-failed",
+                        targetName,
+                        $"Detailed listing request connection failed: {ex.Message}",
+                        API_URL,
+                        attempt,
+                        verificationPass);
                     if (attempt == MaxAttempts)
                     {
                         StartFailureCooldown();
@@ -745,6 +975,13 @@ public sealed class UniversalisClient
                 }
                 catch (JsonException ex)
                 {
+                    TraceFetch(
+                        "detail-response-invalid",
+                        targetName,
+                        $"Detailed response JSON was invalid: {ex.Message}",
+                        API_URL,
+                        attempt,
+                        verificationPass);
                     Service.Log.Warning(ex, "[Universalis] Parse JSON failed.");
                     return new UniversalisResponse
                     {
@@ -822,8 +1059,17 @@ public sealed class UniversalisClient
         lock (retryStateLock)
             allowedAt = nextRequestAllowedAt;
 
+        var cooldownDelay = allowedAt - DateTimeOffset.UtcNow;
+        if (cooldownDelay > TimeSpan.Zero)
+        {
+            TraceFetch(
+                "shared-cooldown-wait",
+                targetName,
+                $"Waiting {FormatDelay(cooldownDelay)} for the shared Universalis recovery cooldown.");
+        }
+
         await WaitWithProgressAsync(
-            allowedAt - DateTimeOffset.UtcNow,
+            cooldownDelay,
             remaining => $"Universalis recovery cooldown for {targetName}: waiting {FormatDelay(remaining)}",
             progress,
             reportProgress,
@@ -840,6 +1086,11 @@ public sealed class UniversalisClient
         Action<UniversalisRequestProgress>? reportProgress,
         CancellationToken cancellationToken)
     {
+        TraceFetch(
+            "retry-wait",
+            targetName,
+            $"{reason}; waiting {FormatDelay(retryDelay)} before attempt {nextAttempt}/{maximumAttempts}.",
+            attempt: nextAttempt);
         await WaitWithProgressAsync(
             retryDelay,
             remaining => $"Universalis {reason} for {targetName}; retrying attempt {nextAttempt}/{maximumAttempts} in {FormatDelay(remaining)}",
@@ -931,6 +1182,26 @@ public sealed class UniversalisClient
             return retryAt - DateTimeOffset.UtcNow;
 
         return null;
+    }
+
+    private static UniversalisResponseHeaders CaptureResponseHeaders(HttpResponseMessage response)
+    {
+        static string? FirstHeader(HttpResponseMessage source, string name) =>
+            source.Headers.TryGetValues(name, out var values)
+                ? values.FirstOrDefault()
+                : null;
+
+        return new UniversalisResponseHeaders(
+            response.Headers.Date,
+            response.Headers.Age?.TotalSeconds,
+            response.Headers.CacheControl?.ToString(),
+            response.Headers.ETag?.ToString(),
+            response.Content.Headers.LastModified,
+            FirstHeader(response, "CF-Cache-Status"),
+            FirstHeader(response, "CF-Ray"),
+            response.Headers.Server.Count > 0
+                ? string.Join(" ", response.Headers.Server)
+                : null);
     }
 
     private static string FormatDelay(TimeSpan delay)

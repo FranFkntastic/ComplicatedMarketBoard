@@ -10,7 +10,7 @@ public static class MarketListingNormalizer
         ArgumentNullException.ThrowIfNull(listings);
 
         var normalized = new List<MarketDataListing>();
-        var identityIndexes = new Dictionary<ListingIdentity, int>();
+        var identityIndexes = new Dictionary<MarketListingIdentity, int>();
         foreach (var listing in listings)
         {
             if (listing is null)
@@ -36,7 +36,7 @@ public static class MarketListingNormalizer
         return normalized;
     }
 
-    private static bool TryGetIdentity(MarketDataListing listing, out ListingIdentity identity)
+    public static bool TryGetIdentity(MarketDataListing listing, out MarketListingIdentity identity)
     {
         var listingId = listing.ListingId?.Trim();
         if (string.IsNullOrEmpty(listingId))
@@ -48,9 +48,9 @@ public static class MarketListingNormalizer
         var world = listing.WorldID != 0
             ? $"id:{listing.WorldID}"
             : $"name:{listing.WorldName?.Trim()}";
-        identity = new ListingIdentity(world, listingId);
+        identity = new MarketListingIdentity(world, listingId);
         return true;
     }
-
-    private readonly record struct ListingIdentity(string World, string ListingId);
 }
+
+public readonly record struct MarketListingIdentity(string World, string ListingId);
