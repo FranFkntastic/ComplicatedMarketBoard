@@ -948,6 +948,10 @@ public sealed class UniversalisClient
     private static UniversalisResponse BuildSuccessResponse(MarketDataCurrent data, MarketItem gameItem, string targetName)
     {
         var fetchTime = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var rawListingCount = data.Listings.Count;
+        var rawListingCutoffPrice = data.Listings.Count > 0
+            ? data.Listings.Max(listing => listing.PricePerUnit)
+            : (long?)null;
         var worldUpdatedData = new Dictionary<string, double>();
         var worldUploadTimes = new Dictionary<string, long>();
         if (data.WorldUploadTimes.Count > 0)
@@ -995,13 +999,16 @@ public sealed class UniversalisClient
             Velocity = data.Velocity,
             VelocityNq = data.VelocityNq,
             VelocityHq = data.VelocityHq,
+            RawListingCount = rawListingCount,
+            RawListingCutoffPrice = rawListingCutoffPrice,
             Listings = MarketListingNormalizer.Normalize(data.Listings).ToList(),
             Entries = data.Entries,
             ScopeName = targetName,
         };
         Service.Log.Debug(
             $"[Universalis] Response {gameItem.Id} for {targetName}: " +
-            $"{universalisResponse.Listings.Count} listings, {universalisResponse.Entries.Count} sales, " +
+            $"{universalisResponse.Listings.Count} unique listings from {universalisResponse.RawListingCount} rows, " +
+            $"{universalisResponse.Entries.Count} sales, " +
             $"latest upload {universalisResponse.LatestUploadTime}.");
 
         return universalisResponse;
