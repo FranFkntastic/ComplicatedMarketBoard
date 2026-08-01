@@ -129,6 +129,20 @@ function Remove-TemporaryBuildRoot {
     }
 }
 
+function Get-RelativeFilePath {
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][string]$File
+    )
+
+    $rootPath = [System.IO.Path]::GetFullPath($Root).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+    $filePath = [System.IO.Path]::GetFullPath($File)
+    if (-not $filePath.StartsWith($rootPath, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "File '$filePath' is outside deployment root '$rootPath'."
+    }
+    return $filePath.Substring($rootPath.Length)
+}
+
 function Copy-DirectoryFiles {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
@@ -138,9 +152,9 @@ function Copy-DirectoryFiles {
 
     [System.IO.Directory]::CreateDirectory($Destination) | Out-Null
     $files = [System.IO.Directory]::EnumerateFiles($Source, '*', [System.IO.SearchOption]::AllDirectories) |
-        Sort-Object { if ([System.IO.Path]::GetRelativePath($Source, $_) -eq $MainDllName) { 1 } else { 0 } }
+        Sort-Object { if ((Get-RelativeFilePath -Root $Source -File $_) -eq $MainDllName) { 1 } else { 0 } }
     foreach ($file in $files) {
-        $relative = [System.IO.Path]::GetRelativePath($Source, $file)
+        $relative = Get-RelativeFilePath -Root $Source -File $file
         $target = Join-Path $Destination $relative
         [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($target)) | Out-Null
         [System.IO.File]::Copy($file, $target, $true)
@@ -154,7 +168,7 @@ function Restore-DirectoryBackup {
     param(
         [Parameter(Mandatory = $true)][string]$Backup,
         [Parameter(Mandatory = $true)][string]$Destination,
-        [Parameter(Mandatory = $true)][string[]]$OriginalFiles
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$OriginalFiles
     )
 
     if (-not (Test-Path -LiteralPath $Backup -PathType Container)) {
@@ -162,7 +176,7 @@ function Restore-DirectoryBackup {
     }
     $originalSet = [System.Collections.Generic.HashSet[string]]::new($OriginalFiles, [StringComparer]::OrdinalIgnoreCase)
     foreach ($file in [System.IO.Directory]::EnumerateFiles($Destination, '*', [System.IO.SearchOption]::AllDirectories)) {
-        $relative = [System.IO.Path]::GetRelativePath($Destination, $file)
+        $relative = Get-RelativeFilePath -Root $Destination -File $file
         if (-not $originalSet.Contains($relative)) {
             [System.IO.File]::Delete($file)
         }
@@ -302,7 +316,7 @@ if ($Profile -eq 'Secondary') {
                 $deploymentTargetDirectory,
                 '*',
                 [System.IO.SearchOption]::AllDirectories) | ForEach-Object {
-                    [System.IO.Path]::GetRelativePath($deploymentTargetDirectory, $_)
+                    Get-RelativeFilePath -Root $deploymentTargetDirectory -File $_
                 })
             Copy-DirectoryFiles -Source $deploymentTargetDirectory -Destination $deploymentBackupRoot
         }
