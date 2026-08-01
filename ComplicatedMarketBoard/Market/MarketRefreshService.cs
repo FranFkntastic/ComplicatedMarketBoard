@@ -13,11 +13,7 @@ namespace ComplicatedMarketBoard.Market;
 
 public sealed class MarketRefreshService
 {
-    private readonly object requestLock = new();
-    private CancellationTokenSource? activeRequestCancellation;
-    private int requestVersion;
-
-    private sealed record RequestContext(int Version, CancellationTokenSource Cancellation);
+    private readonly MarketRefreshRequestCoordinator requestCoordinator = new();
 
     public MarketRefreshService()
     {
@@ -25,8 +21,7 @@ public sealed class MarketRefreshService
 
     public void Dispose()
     {
-        lock (requestLock)
-            activeRequestCancellation?.Cancel();
+        requestCoordinator.Dispose();
     }
 
 
@@ -37,20 +32,22 @@ public sealed class MarketRefreshService
     public void DoCheckAsync(ulong itemId)
     {
         Service.Log.Debug($"[MarketRefresh] Start item lookup: {itemId}");
-        var request = BeginRequest();
+        var requestedScope = P.MainWindow.GetSelectedMarketScopeLabel();
+        var request = requestCoordinator.BeginSuperseding(
+            new MarketRefreshRequestKey(itemId, requestedScope, RequireCurrentDetails: false));
 
         Task.Run(async () =>
         {
             try
             {
                 Interlocked.Increment(ref P.MainWindow.LoadingQueue);
-                await CheckItemAsync(request, itemId);
+                await CheckItemAsync(request, itemId, requestedScope);
             }
             catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { }
             catch (Exception ex)
             {
                 Service.Log.Error($"[MarketRefresh] Item lookup failed, {ex.Message}");
-                if (IsCurrent(request))
+                if (requestCoordinator.IsCurrent(request))
                 {
                     P.MainWindow.CurrentItemLabel = "Error";
                     P.MainWindow.FailMarketDataRefresh(ex.Message);
@@ -59,19 +56,22 @@ public sealed class MarketRefreshService
             finally
             {
                 Interlocked.Decrement(ref P.MainWindow.LoadingQueue);
-                EndRequest(request);
+                requestCoordinator.End(request);
             }
         });
     }
 
-    private async Task CheckItemAsync(RequestContext request, ulong itemId)
+    private async Task CheckItemAsync(
+        MarketRefreshRequestContext request,
+        ulong itemId,
+        string requestedScope)
     {
         var _cacheIds = GameItemCacheList.Select(i => i.Id).ToList();
         if (_cacheIds.Contains(itemId))
         {
             Service.Log.Debug($"[MarketRefresh] {itemId} found in cache.");
             var cached_gameItem = GameItemCacheList.Single(i => i.Id == itemId);
-            if (IsCurrent(request))
+            if (requestCoordinator.IsCurrent(request))
             {
                 P.MainWindow.ShowCachedMarketData(cached_gameItem.Name);
                 P.MainWindow.CurrentItemUpdate(cached_gameItem);
@@ -103,26 +103,34 @@ public sealed class MarketRefreshService
             gameItem.VendorSelling = gameItem.InGame.PriceMid;
         }
 
-        await CheckGameItemAsync(request, gameItem, requireCurrentDetails: false);
+        await CheckGameItemAsync(request, gameItem, requestedScope, requireCurrentDetails: false);
     }
 
     public void DoCheckRefreshAsync(MarketItem gameItem)
     {
-        Service.Log.Debug($"[MarketRefresh] Start refresh: {gameItem.Id}");
-        var request = BeginRequest();
+        var requestedScope = P.MainWindow.GetSelectedMarketScopeLabel();
+        var requestKey = new MarketRefreshRequestKey(gameItem.Id, requestedScope, RequireCurrentDetails: true);
+        var request = requestCoordinator.TryBeginCoalesced(requestKey);
+        if (request is null)
+        {
+            Service.Log.Debug($"[MarketRefresh] Refresh already active: {gameItem.Id} on {requestedScope}.");
+            return;
+        }
+
+        Service.Log.Debug($"[MarketRefresh] Start refresh: {gameItem.Id} on {requestedScope}");
 
         Task.Run(async () =>
         {
             try
             {
                 Interlocked.Increment(ref P.MainWindow.LoadingQueue);
-                await CheckGameItemAsync(request, gameItem, requireCurrentDetails: true);
+                await CheckGameItemAsync(request, gameItem, requestedScope, requireCurrentDetails: true);
             }
             catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { }
             catch (Exception ex)
             {
                 Service.Log.Error($"[MarketRefresh] Refresh failed, {ex.Message}");
-                if (IsCurrent(request))
+                if (requestCoordinator.IsCurrent(request))
                 {
                     P.MainWindow.CurrentItemLabel = "Error";
                     P.MainWindow.FailMarketDataRefresh(ex.Message);
@@ -131,24 +139,25 @@ public sealed class MarketRefreshService
             finally
             {
                 Interlocked.Decrement(ref P.MainWindow.LoadingQueue);
-                EndRequest(request);
+                requestCoordinator.End(request);
             }
         });
     }
 
 
     private async Task CheckGameItemAsync(
-        RequestContext request,
+        MarketRefreshRequestContext request,
         MarketItem gameItem,
+        string requestedScope,
         bool requireCurrentDetails)
     {
         request.Cancellation.Token.ThrowIfCancellationRequested();
-        if (!IsCurrent(request))
+        if (!requestCoordinator.IsCurrent(request))
             return;
 
         P.MainWindow.CurrentItemLabel = gameItem.Name;
         P.MainWindow.CurrentItemIcon = Service.Texture.GetFromGameIcon(new GameIconLookup(gameItem.InGame.Icon))!;
-        gameItem.TargetRegion = P.MainWindow.GetSelectedMarketScopeLabel();
+        gameItem.TargetRegion = requestedScope;
         gameItem.FetchTimestamp = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var vocabulary = MarketRefreshVocabulary.Create(
             P.Config.HolidaySpirit,
@@ -161,13 +170,13 @@ public sealed class MarketRefreshService
             request.Cancellation.Token,
             progress =>
             {
-                if (IsCurrent(request))
+                if (requestCoordinator.IsCurrent(request))
                     P.MainWindow.UpdateMarketDataRefresh(progress.StatusText, progress.Progress);
             },
             requireCurrentDetails,
             vocabulary);
         request.Cancellation.Token.ThrowIfCancellationRequested();
-        if (!IsCurrent(request))
+        if (!requestCoordinator.IsCurrent(request))
             return;
 
         P.MainWindow.UpdateMarketDataRefresh(
@@ -226,35 +235,6 @@ public sealed class MarketRefreshService
         UniversalisResponseStatus.UnknownError => "unknown error",
         _ => $"status {status}",
     };
-
-    private RequestContext BeginRequest()
-    {
-        lock (requestLock)
-        {
-            activeRequestCancellation?.Cancel();
-            var cancellation = new CancellationTokenSource();
-            activeRequestCancellation = cancellation;
-            return new RequestContext(++requestVersion, cancellation);
-        }
-    }
-
-    private bool IsCurrent(RequestContext request)
-    {
-        lock (requestLock)
-            return request.Version == requestVersion && !request.Cancellation.IsCancellationRequested;
-    }
-
-    private void EndRequest(RequestContext request)
-    {
-        lock (requestLock)
-        {
-            if (request.Version == requestVersion)
-                activeRequestCancellation = null;
-        }
-
-        request.Cancellation.Dispose();
-    }
-
 
     // -------------------------------- search history --------------------------------
     public void SearchHistoryUpdate(MarketItem gameItem)
