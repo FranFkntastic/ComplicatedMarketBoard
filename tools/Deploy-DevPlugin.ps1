@@ -25,6 +25,7 @@ $sourceDirectory = Join-Path $repository 'ComplicatedMarketBoard\bin\Debug'
 $sourceDll = Join-Path $sourceDirectory 'ComplicatedMarketBoard.dll'
 $profileKey = $Profile.ToLowerInvariant()
 $profileDirectoryName = if ($Profile -eq 'Primary') { 'XIVLauncher' } else { 'XIVLauncher-Multibox-2' }
+$dabProfile = if ($Profile -eq 'Primary') { 'primary' } else { 'XIVLauncher-Multibox-2' }
 $profileRoot = Join-Path $env:APPDATA $profileDirectoryName
 $configPath = Join-Path $profileRoot 'dalamudConfig.json'
 $laneRoot = Join-Path $env:LOCALAPPDATA 'FranFkntastic\ComplicatedMarketBoard\dev-lanes'
@@ -78,7 +79,7 @@ function Resolve-DabPath {
 function Get-CmbCatalogEntry {
     param([Parameter(Mandatory = $true)][string]$Executable)
 
-    $json = & $Executable plugins --profile $profileKey | Out-String
+    $json = & $Executable plugins --profile $dabProfile | Out-String
     if ($LASTEXITCODE -ne 0) {
         throw "DAB could not read the $Profile plugin catalog."
     }
@@ -249,7 +250,7 @@ if ([string]::IsNullOrWhiteSpace($productVersion) -or $productVersion -notlike "
 $deploymentReceipt = $null
 if ($Profile -eq 'Secondary') {
     try {
-        $deploymentJson = & $dab deploy ComplicatedMarketBoard --profile $profileKey --source $buildDirectory --sha256 $sourceHash --timeout ($TimeoutSeconds * 1000) | Out-String
+        $deploymentJson = & $dab deploy ComplicatedMarketBoard --profile $dabProfile --source $buildDirectory --sha256 $sourceHash --timeout ($TimeoutSeconds * 1000) | Out-String
         if ($LASTEXITCODE -ne 0) {
             throw "DAB could not deploy CMB to $Profile."
         }
