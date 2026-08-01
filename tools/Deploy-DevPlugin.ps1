@@ -4,7 +4,7 @@ param(
     [ValidateSet('Status', 'Claim', 'Deploy', 'Release')]
     [string]$Action,
 
-    [ValidateSet('Primary')]
+    [ValidateSet('Primary', 'Secondary')]
     [string]$Profile = 'Primary',
 
     [string]$Owner,
@@ -23,10 +23,12 @@ $workspace = Split-Path -Parent $repository
 $project = Join-Path $repository 'ComplicatedMarketBoard\ComplicatedMarketBoard.csproj'
 $sourceDirectory = Join-Path $repository 'ComplicatedMarketBoard\bin\Debug'
 $sourceDll = Join-Path $sourceDirectory 'ComplicatedMarketBoard.dll'
-$profileRoot = Join-Path $env:APPDATA 'XIVLauncher'
+$profileKey = $Profile.ToLowerInvariant()
+$profileDirectoryName = if ($Profile -eq 'Primary') { 'XIVLauncher' } else { 'XIVLauncher-Multibox-2' }
+$profileRoot = Join-Path $env:APPDATA $profileDirectoryName
 $configPath = Join-Path $profileRoot 'dalamudConfig.json'
 $laneRoot = Join-Path $env:LOCALAPPDATA 'FranFkntastic\ComplicatedMarketBoard\dev-lanes'
-$leasePath = Join-Path $laneRoot 'primary.json'
+$leasePath = Join-Path $laneRoot "$profileKey.json"
 
 function Get-RepositoryValue {
     param([Parameter(Mandatory = $true)][string[]]$Arguments)
@@ -54,7 +56,7 @@ function Get-ActiveLease {
         return $lease
     }
     catch {
-        throw "CMB Primary lease is unreadable at '$leasePath': $($_.Exception.Message)"
+        throw "CMB $Profile lease is unreadable at '$leasePath': $($_.Exception.Message)"
     }
 }
 
@@ -76,9 +78,9 @@ function Resolve-DabPath {
 function Get-CmbCatalogEntry {
     param([Parameter(Mandatory = $true)][string]$Executable)
 
-    $json = & $Executable plugins --profile primary | Out-String
+    $json = & $Executable plugins --profile $profileKey | Out-String
     if ($LASTEXITCODE -ne 0) {
-        throw "DAB could not read the Primary plugin catalog."
+        throw "DAB could not read the $Profile plugin catalog."
     }
 
     $catalog = $json | ConvertFrom-Json
@@ -86,7 +88,7 @@ function Get-CmbCatalogEntry {
         $_.internalName -eq 'ComplicatedMarketBoard' -and $_.isLoaded -and $_.isDev
     })
     if ($matches.Count -ne 1) {
-        throw "Primary must expose exactly one loaded ComplicatedMarketBoard development entry; found $($matches.Count)."
+        throw "$Profile must expose exactly one loaded ComplicatedMarketBoard development entry; found $($matches.Count)."
     }
 
     return $matches[0]
@@ -94,7 +96,7 @@ function Get-CmbCatalogEntry {
 
 function Get-RegisteredDllPath {
     if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
-        throw "Primary Dalamud configuration was not found at '$configPath'."
+        throw "$Profile Dalamud configuration was not found at '$configPath'."
     }
 
     $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json
@@ -102,7 +104,7 @@ function Get-RegisteredDllPath {
         $_.IsEnabled -and [System.IO.Path]::GetFileName($_.Path) -eq 'ComplicatedMarketBoard.dll'
     })
     if ($locations.Count -ne 1) {
-        throw "Primary must have exactly one enabled ComplicatedMarketBoard development registration; found $($locations.Count)."
+        throw "$Profile must have exactly one enabled ComplicatedMarketBoard development registration; found $($locations.Count)."
     }
 
     return [System.IO.Path]::GetFullPath($locations[0].Path)
@@ -117,6 +119,13 @@ function Assert-Owner {
 function Write-Receipt {
     param([Parameter(Mandatory = $true)][hashtable]$Receipt)
     [pscustomobject]$Receipt | ConvertTo-Json -Depth 6
+}
+
+function Remove-TemporaryBuildRoot {
+    param([AllowNull()][string]$Path)
+    if (-not [string]::IsNullOrWhiteSpace($Path) -and (Test-Path -LiteralPath $Path)) {
+        [System.IO.Directory]::Delete([System.IO.Path]::GetFullPath($Path), $true)
+    }
 }
 
 if ($Action -eq 'Status') {
@@ -136,7 +145,7 @@ $activeLease = Get-ActiveLease
 
 if ($Action -eq 'Claim') {
     if ($null -ne $activeLease -and $activeLease.owner -ne $Owner) {
-        throw "CMB Primary is claimed by '$($activeLease.owner)' until $($activeLease.expiresAtUtc)."
+        throw "CMB $Profile is claimed by '$($activeLease.owner)' until $($activeLease.expiresAtUtc)."
     }
 
     New-Item -ItemType Directory -Path $laneRoot -Force | Out-Null
@@ -155,7 +164,7 @@ if ($Action -eq 'Claim') {
 }
 
 if ($null -eq $activeLease -or $activeLease.owner -ne $Owner) {
-    throw "CMB Primary is not claimed by '$Owner'. Run -Action Claim first."
+    throw "CMB $Profile is not claimed by '$Owner'. Run -Action Claim first."
 }
 
 if ($Action -eq 'Release') {
@@ -192,36 +201,79 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 $registeredDll = Get-RegisteredDllPath
-if (-not [string]::Equals(
-    [System.IO.Path]::GetFullPath($sourceDll),
-    $registeredDll,
-    [StringComparison]::OrdinalIgnoreCase)) {
-    throw "Primary watches '$registeredDll', not this integration worktree's '$sourceDll'."
+$expectedRegisteredDll = if ($Profile -eq 'Primary') {
+    [System.IO.Path]::GetFullPath($sourceDll)
+}
+else {
+    [System.IO.Path]::GetFullPath((Join-Path $profileRoot 'devPlugins\ComplicatedMarketBoard\ComplicatedMarketBoard.dll'))
+}
+if (-not [string]::Equals($expectedRegisteredDll, $registeredDll, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "$Profile watches '$registeredDll', not its canonical CMB path '$expectedRegisteredDll'."
 }
 
 $dab = Resolve-DabPath
 $before = Get-CmbCatalogEntry $dab
 if (-not $before.isLoaded -or -not $before.isDev) {
-    throw "Primary ComplicatedMarketBoard must be a loaded development plugin before deployment."
+    throw "$Profile ComplicatedMarketBoard must be a loaded development plugin before deployment."
 }
 
-& dotnet build $project -c Debug --no-restore --no-incremental
+$buildDirectory = $sourceDirectory
+$temporaryBuildRoot = $null
+if ($Profile -eq 'Secondary') {
+    $temporaryBuildRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cmb-secondary-$([Guid]::NewGuid().ToString('N'))"
+    $buildDirectory = Join-Path $temporaryBuildRoot 'output'
+}
+
+$buildArguments = @('build', $project, '-c', 'Debug', '--no-restore', '--no-incremental')
+if ($Profile -eq 'Secondary') {
+    $buildArguments += "-p:OutputPath=$buildDirectory"
+}
+& dotnet @buildArguments
 if ($LASTEXITCODE -ne 0) {
+    Remove-TemporaryBuildRoot $temporaryBuildRoot
     throw "CMB Debug build failed with exit code $LASTEXITCODE."
 }
-if (-not (Test-Path -LiteralPath $sourceDll -PathType Leaf)) {
-    throw "CMB build did not produce '$sourceDll'."
+$buildDll = Join-Path $buildDirectory 'ComplicatedMarketBoard.dll'
+if (-not (Test-Path -LiteralPath $buildDll -PathType Leaf)) {
+    Remove-TemporaryBuildRoot $temporaryBuildRoot
+    throw "CMB build did not produce '$buildDll'."
 }
 
-$sourceHash = (Get-FileHash -LiteralPath $sourceDll -Algorithm SHA256).Hash
-$assemblyVersion = [System.Reflection.AssemblyName]::GetAssemblyName($sourceDll).Version.ToString()
-$productVersion = (Get-Item -LiteralPath $sourceDll).VersionInfo.ProductVersion
+$sourceHash = (Get-FileHash -LiteralPath $buildDll -Algorithm SHA256).Hash
+$assemblyVersion = [System.Reflection.AssemblyName]::GetAssemblyName($buildDll).Version.ToString()
+$productVersion = (Get-Item -LiteralPath $buildDll).VersionInfo.ProductVersion
 if ([string]::IsNullOrWhiteSpace($productVersion) -or $productVersion -notlike "*$commit*") {
+    Remove-TemporaryBuildRoot $temporaryBuildRoot
     throw "CMB artifact product version '$productVersion' does not carry integration commit '$commit'."
 }
+$deploymentReceipt = $null
+if ($Profile -eq 'Secondary') {
+    try {
+        $deploymentJson = & $dab deploy ComplicatedMarketBoard --profile $profileKey --source $buildDirectory --sha256 $sourceHash --timeout ($TimeoutSeconds * 1000) | Out-String
+        if ($LASTEXITCODE -ne 0) {
+            throw "DAB could not deploy CMB to $Profile."
+        }
+        $deploymentReceipt = $deploymentJson | ConvertFrom-Json
+        if (-not [string]::Equals($deploymentReceipt.installedMainDllSha256, $sourceHash, [StringComparison]::OrdinalIgnoreCase) -or
+            -not [string]::Equals($deploymentReceipt.loadedMainDllSha256, $sourceHash, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "$Profile did not verify the expected CMB DLL hash after deployment."
+        }
+    }
+    finally {
+        Remove-TemporaryBuildRoot $temporaryBuildRoot
+    }
+}
 $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
-$after = $null
+$after = if ($Profile -eq 'Secondary' -and $deploymentReceipt.reloaded -eq $false) {
+    Get-CmbCatalogEntry $dab
+}
+else {
+    $null
+}
 do {
+    if ($null -ne $after) {
+        break
+    }
     Start-Sleep -Milliseconds 200
     try {
         $candidate = Get-CmbCatalogEntry $dab
@@ -238,7 +290,7 @@ do {
 } while ([DateTimeOffset]::UtcNow -lt $deadline)
 
 if ($null -eq $after) {
-    throw "Primary did not advertise the expected CMB commit '$commit' before the deployment timeout."
+    throw "$Profile did not advertise the expected CMB commit '$commit' before the deployment timeout."
 }
 
 Write-Receipt @{
@@ -252,4 +304,5 @@ Write-Receipt @{
     productVersion = $productVersion
     before = $before
     after = $after
+    bridgeDeployment = $deploymentReceipt
 }
