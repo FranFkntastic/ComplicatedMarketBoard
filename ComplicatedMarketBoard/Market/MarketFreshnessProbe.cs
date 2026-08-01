@@ -31,10 +31,10 @@ public static class MarketFreshnessMatcher
         bool hqOnly,
         int listingLimit)
     {
-        var isTruncated = listingLimit > 0 && detailed.Listings.Count >= listingLimit;
-        var cutoffPrice = isTruncated && detailed.Listings.Count > 0
-            ? detailed.Listings.Max(listing => listing.PricePerUnit)
-            : (long?)null;
+        var isTruncated = listingLimit > 0 && detailed.RawListingCount >= listingLimit;
+        var cutoffPrice = isTruncated
+            ? detailed.RawListingCutoffPrice
+            : null;
 
         foreach (var probe in worldProbes)
         {

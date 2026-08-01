@@ -261,6 +261,8 @@ public sealed class MarketFreshnessMatcherTests
         var detailed = new UniversalisResponse
         {
             Status = UniversalisResponseStatus.Success,
+            RawListingCount = 1,
+            RawListingCutoffPrice = 33,
             Listings =
             [
                 new MarketDataListing
@@ -285,6 +287,58 @@ public sealed class MarketFreshnessMatcherTests
             listingLimit: 1);
 
         Assert.True(result.IsCurrent);
+    }
+
+    [Theory]
+    [InlineData(949_993, true)]
+    [InlineData(500_000, false)]
+    public void CompareScope_UsesRawPageCutoffAfterListingIdentityDeduplication(
+        long adamantoiseMinimum,
+        bool expectedCurrent)
+    {
+        var rawListings = Enumerable.Range(0, 50)
+            .Select(index => new MarketDataListing
+            {
+                ListingId = $"listing-{index % 7}",
+                LastReviewTime = index,
+                PricePerUnit = index == 49 ? 600_001 : 33,
+                Quantity = 1_000,
+                WorldID = 411,
+                WorldName = "Golem",
+            })
+            .ToList();
+        var probes = new[]
+        {
+            new MarketFreshnessProbe(
+                "Golem",
+                new MarketMinimumProbe(false, 33, 411, "Golem", 2_000),
+                null),
+            new MarketFreshnessProbe(
+                "Adamantoise",
+                new MarketMinimumProbe(false, adamantoiseMinimum, 73, "Adamantoise", 2_000),
+                null),
+        };
+        var detailed = new UniversalisResponse
+        {
+            Status = UniversalisResponseStatus.Success,
+            RawListingCount = rawListings.Count,
+            RawListingCutoffPrice = rawListings.Max(listing => listing.PricePerUnit),
+            Listings = MarketListingNormalizer.Normalize(rawListings).ToList(),
+            WorldUploadTimes = new Dictionary<string, long>
+            {
+                ["Golem"] = 2_000,
+                ["Adamantoise"] = 2_000,
+            },
+        };
+
+        var result = MarketFreshnessMatcher.CompareScope(
+            probes,
+            detailed,
+            hqOnly: false,
+            listingLimit: 50);
+
+        Assert.Equal(7, detailed.Listings.Count);
+        Assert.Equal(expectedCurrent, result.IsCurrent);
     }
 
     private static MarketFreshnessProbe Probe(long nqPrice, long nqUploadTime)

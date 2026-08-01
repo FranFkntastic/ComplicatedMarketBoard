@@ -107,6 +107,16 @@ public class UniversalisResponse
     public double VelocityHq { get; set; }
 
     /// <summary>
+    /// Gets the number of listing rows returned by Universalis before duplicate identities are removed.
+    /// </summary>
+    public int RawListingCount { get; set; }
+
+    /// <summary>
+    /// Gets the highest listing price in the raw Universalis page before duplicate identities are removed.
+    /// </summary>
+    public long? RawListingCutoffPrice { get; set; }
+
+    /// <summary>
     /// Gets or sets the listings.
     /// </summary>
     [JsonPropertyName("listings")]
