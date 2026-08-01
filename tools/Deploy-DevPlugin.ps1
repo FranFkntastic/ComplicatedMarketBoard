@@ -129,6 +129,47 @@ function Remove-TemporaryBuildRoot {
     }
 }
 
+function Copy-DirectoryFiles {
+    param(
+        [Parameter(Mandatory = $true)][string]$Source,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [string]$MainDllName
+    )
+
+    [System.IO.Directory]::CreateDirectory($Destination) | Out-Null
+    $files = [System.IO.Directory]::EnumerateFiles($Source, '*', [System.IO.SearchOption]::AllDirectories) |
+        Sort-Object { if ([System.IO.Path]::GetRelativePath($Source, $_) -eq $MainDllName) { 1 } else { 0 } }
+    foreach ($file in $files) {
+        $relative = [System.IO.Path]::GetRelativePath($Source, $file)
+        $target = Join-Path $Destination $relative
+        [System.IO.Directory]::CreateDirectory([System.IO.Path]::GetDirectoryName($target)) | Out-Null
+        [System.IO.File]::Copy($file, $target, $true)
+        if ($relative -eq $MainDllName) {
+            [System.IO.File]::SetLastWriteTimeUtc($target, [DateTime]::UtcNow)
+        }
+    }
+}
+
+function Restore-DirectoryBackup {
+    param(
+        [Parameter(Mandatory = $true)][string]$Backup,
+        [Parameter(Mandatory = $true)][string]$Destination,
+        [Parameter(Mandatory = $true)][string[]]$OriginalFiles
+    )
+
+    if (-not (Test-Path -LiteralPath $Backup -PathType Container)) {
+        return
+    }
+    $originalSet = [System.Collections.Generic.HashSet[string]]::new($OriginalFiles, [StringComparer]::OrdinalIgnoreCase)
+    foreach ($file in [System.IO.Directory]::EnumerateFiles($Destination, '*', [System.IO.SearchOption]::AllDirectories)) {
+        $relative = [System.IO.Path]::GetRelativePath($Destination, $file)
+        if (-not $originalSet.Contains($relative)) {
+            [System.IO.File]::Delete($file)
+        }
+    }
+    Copy-DirectoryFiles -Source $Backup -Destination $Destination -MainDllName 'ComplicatedMarketBoard.dll'
+}
+
 if ($Action -eq 'Status') {
     $entry = Get-CmbCatalogEntry (Resolve-DabPath)
     Write-Receipt @{
@@ -248,33 +289,46 @@ if ([string]::IsNullOrWhiteSpace($productVersion) -or $productVersion -notlike "
     throw "CMB artifact product version '$productVersion' does not carry integration commit '$commit'."
 }
 $deploymentReceipt = $null
+$deploymentBackupRoot = $null
+$deploymentTargetDirectory = $null
+$deploymentOriginalFiles = @()
 if ($Profile -eq 'Secondary') {
     try {
-        $deploymentJson = & $dab deploy ComplicatedMarketBoard --profile $dabProfile --source $buildDirectory --sha256 $sourceHash --timeout ($TimeoutSeconds * 1000) | Out-String
-        if ($LASTEXITCODE -ne 0) {
-            throw "DAB could not deploy CMB to $Profile."
+        $deploymentTargetDirectory = [System.IO.Path]::GetDirectoryName($registeredDll)
+        $deploymentBackupRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cmb-secondary-backup-$([Guid]::NewGuid().ToString('N'))"
+        [System.IO.Directory]::CreateDirectory($deploymentBackupRoot) | Out-Null
+        if (Test-Path -LiteralPath $deploymentTargetDirectory -PathType Container) {
+            $deploymentOriginalFiles = @([System.IO.Directory]::EnumerateFiles(
+                $deploymentTargetDirectory,
+                '*',
+                [System.IO.SearchOption]::AllDirectories) | ForEach-Object {
+                    [System.IO.Path]::GetRelativePath($deploymentTargetDirectory, $_)
+                })
+            Copy-DirectoryFiles -Source $deploymentTargetDirectory -Destination $deploymentBackupRoot
         }
-        $deploymentReceipt = $deploymentJson | ConvertFrom-Json
-        if (-not [string]::Equals($deploymentReceipt.installedMainDllSha256, $sourceHash, [StringComparison]::OrdinalIgnoreCase) -or
-            -not [string]::Equals($deploymentReceipt.loadedMainDllSha256, $sourceHash, [StringComparison]::OrdinalIgnoreCase)) {
+        Copy-DirectoryFiles -Source $buildDirectory -Destination $deploymentTargetDirectory -MainDllName 'ComplicatedMarketBoard.dll'
+        $installedHash = (Get-FileHash -LiteralPath $registeredDll -Algorithm SHA256).Hash
+        if (-not [string]::Equals($installedHash, $sourceHash, [StringComparison]::OrdinalIgnoreCase)) {
             throw "$Profile did not verify the expected CMB DLL hash after deployment."
         }
+        $deploymentReceipt = [ordered]@{
+            targetDirectory = $deploymentTargetDirectory
+            installedMainDllSha256 = $installedHash
+            backupDirectory = $deploymentBackupRoot
+        }
+    }
+    catch {
+        Restore-DirectoryBackup -Backup $deploymentBackupRoot -Destination $deploymentTargetDirectory -OriginalFiles $deploymentOriginalFiles
+        Remove-TemporaryBuildRoot $deploymentBackupRoot
+        throw
     }
     finally {
         Remove-TemporaryBuildRoot $temporaryBuildRoot
     }
 }
 $deadline = [DateTimeOffset]::UtcNow.AddSeconds($TimeoutSeconds)
-$after = if ($Profile -eq 'Secondary' -and $deploymentReceipt.reloaded -eq $false) {
-    Get-CmbCatalogEntry $dab
-}
-else {
-    $null
-}
+$after = $null
 do {
-    if ($null -ne $after) {
-        break
-    }
     Start-Sleep -Milliseconds 200
     try {
         $candidate = Get-CmbCatalogEntry $dab
@@ -291,7 +345,23 @@ do {
 } while ([DateTimeOffset]::UtcNow -lt $deadline)
 
 if ($null -eq $after) {
+    if ($Profile -eq 'Secondary') {
+        Restore-DirectoryBackup -Backup $deploymentBackupRoot -Destination $deploymentTargetDirectory -OriginalFiles $deploymentOriginalFiles
+        Remove-TemporaryBuildRoot $deploymentBackupRoot
+    }
     throw "$Profile did not advertise the expected CMB commit '$commit' before the deployment timeout."
+}
+
+if ($Profile -eq 'Secondary') {
+    $loadedDestinationHash = (Get-FileHash -LiteralPath $registeredDll -Algorithm SHA256).Hash
+    if (-not [string]::Equals($loadedDestinationHash, $sourceHash, [StringComparison]::OrdinalIgnoreCase)) {
+        Restore-DirectoryBackup -Backup $deploymentBackupRoot -Destination $deploymentTargetDirectory -OriginalFiles $deploymentOriginalFiles
+        Remove-TemporaryBuildRoot $deploymentBackupRoot
+        throw "$Profile CMB destination changed before loaded-runtime verification completed."
+    }
+    $deploymentReceipt['loadedDestinationSha256'] = $loadedDestinationHash
+    $deploymentReceipt['backupDirectory'] = $null
+    Remove-TemporaryBuildRoot $deploymentBackupRoot
 }
 
 Write-Receipt @{
