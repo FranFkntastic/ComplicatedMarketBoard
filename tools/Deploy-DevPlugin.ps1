@@ -231,19 +231,19 @@ if ($Action -eq 'Release') {
 
 $branch = Get-RepositoryValue @('branch', '--show-current')
 $commit = Get-RepositoryValue @('rev-parse', 'HEAD')
-$originCommit = Get-RepositoryValue @('rev-parse', 'origin/local-dev')
+$originCommit = Get-RepositoryValue @('rev-parse', 'origin/master')
 $dirty = Get-RepositoryValue @('status', '--porcelain=v1', '--untracked-files=all')
-if ($branch -ne 'local-dev') {
-    throw "CMB deployment requires branch 'local-dev'; current branch is '$branch'."
+if ($branch -ne 'master') {
+    throw "CMB deployment requires branch 'master'; current branch is '$branch'."
 }
 if (-not [string]::IsNullOrWhiteSpace($dirty)) {
     throw "CMB deployment requires a clean worktree."
 }
 if ($commit -ne $originCommit) {
-    throw "CMB local-dev '$commit' does not match origin/local-dev '$originCommit'."
+    throw "CMB master '$commit' does not match origin/master '$originCommit'."
 }
 if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and -not $commit.StartsWith($ExpectedCommit, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "CMB local-dev '$commit' does not match expected commit '$ExpectedCommit'."
+    throw "CMB master '$commit' does not match expected commit '$ExpectedCommit'."
 }
 
 $franthropy = Join-Path $workspace 'Franthropy'
