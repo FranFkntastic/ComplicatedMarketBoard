@@ -5,7 +5,6 @@ using Dalamud.Game.Text.SeStringHandling.Payloads;
 using Dalamud.Game.Text.SeStringHandling;
 using Dalamud.Interface.Style;
 using Dalamud.Plugin.Services;
-using Miosuke.Configuration;
 using Miosuke.Messages;
 using ComplicatedMarketBoard.Integrations.Universalis;
 using ComplicatedMarketBoard.Assets;
@@ -14,6 +13,7 @@ using ComplicatedMarketBoard.Market;
 using ComplicatedMarketBoard.Services;
 using ComplicatedMarketBoard.Windows;
 using Franthropy.Dalamud.Observations;
+using Franthropy.Dalamud.Persistence;
 
 
 namespace ComplicatedMarketBoard;
@@ -28,6 +28,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
     // PLUGIN
     internal static ComplicatedMarketBoardPlugin P;
     internal ComplicatedMarketBoardConfig Config;
+    internal JsonConfigStore<ComplicatedMarketBoardConfig> ConfigStore { get; private set; }
     public DalamudLinkPayload? PluginPayload;
     public StyleModel PluginTheme { get; set; }
     public bool PluginThemeEnabled { get; set; }
@@ -101,9 +102,18 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         // plugin init
         P = this;
         // config init
-        MioConfig.Setup(MainConfigFileName: "main.json");
-        if (Service.PluginInterface.ConfigFile.Exists) MioConfig.Migrate<ComplicatedMarketBoardConfig>(Service.PluginInterface.ConfigFile.FullName);
-        Config = MioConfig.Init<ComplicatedMarketBoardConfig>();
+        ConfigStore = new JsonConfigStore<ComplicatedMarketBoardConfig>(new JsonConfigStoreOptions
+        {
+            ConfigDirectory = pluginInterface.GetPluginConfigDirectory(),
+            MainConfigFileName = "main.json",
+            Diagnostic = (message, exception) =>
+            {
+                if (exception is null) pluginLog.Warning(message);
+                else pluginLog.Error(exception, message);
+            },
+        });
+        if (pluginInterface.ConfigFile.Exists) ConfigStore.TryMigrateFrom(pluginInterface.ConfigFile.FullName);
+        Config = ConfigStore.Load();
 
         // theme
         ImGuiThemeLoadCustomOrDefault();

@@ -7,8 +7,20 @@ using Franthropy.Dalamud.UI.Seasonal;
 
 namespace ComplicatedMarketBoard.Configuration;
 
-public class ComplicatedMarketBoardConfig : IMioConfig
+public class ComplicatedMarketBoardConfig
 {
+    public void Save()
+    {
+        try
+        {
+            ComplicatedMarketBoardPlugin.P.ConfigStore.Save(this);
+        }
+        catch (Exception exception)
+        {
+            Service.Log.Error(exception, "Failed to save configuration");
+        }
+    }
+
     public int Version = 1;
 
 
