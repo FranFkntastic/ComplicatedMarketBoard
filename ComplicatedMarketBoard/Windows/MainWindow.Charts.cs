@@ -1,7 +1,6 @@
 using Dalamud.Bindings.ImGui;
 using ComplicatedMarketBoard.Integrations.Universalis;
 using Franthropy.Dalamud.UI.Plots;
-using Miosuke.Configuration;
 
 namespace ComplicatedMarketBoard.Windows;
 

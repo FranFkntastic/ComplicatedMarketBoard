@@ -1,6 +1,5 @@
 using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Text;
-using Miosuke.Configuration;
 using ComplicatedMarketBoard.Market;
 using Franthropy.Dalamud.UI.Seasonal;
 
