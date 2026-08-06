@@ -4,7 +4,7 @@ param(
     [ValidateSet('Status', 'Claim', 'Deploy', 'Release')]
     [string]$Action,
 
-    [ValidateSet('Primary', 'Secondary')]
+    [ValidateSet('Primary', 'Secondary', 'Quaternary')]
     [string]$Profile = 'Primary',
 
     [string]$Owner,
@@ -24,8 +24,12 @@ $project = Join-Path $repository 'ComplicatedMarketBoard\ComplicatedMarketBoard.
 $sourceDirectory = Join-Path $repository 'ComplicatedMarketBoard\bin\Debug'
 $sourceDll = Join-Path $sourceDirectory 'ComplicatedMarketBoard.dll'
 $profileKey = $Profile.ToLowerInvariant()
-$profileDirectoryName = if ($Profile -eq 'Primary') { 'XIVLauncher' } else { 'XIVLauncher-Multibox-2' }
-$dabProfile = if ($Profile -eq 'Primary') { 'primary' } else { 'XIVLauncher-Multibox-2' }
+$profileDirectoryName = switch ($Profile) {
+    'Primary' { 'XIVLauncher' }
+    'Secondary' { 'XIVLauncher-Multibox-2' }
+    'Quaternary' { 'XIVLauncher-Multibox-4' }
+}
+$dabProfile = if ($Profile -eq 'Primary') { 'primary' } else { $profileDirectoryName }
 $profileRoot = Join-Path $env:APPDATA $profileDirectoryName
 $configPath = Join-Path $profileRoot 'dalamudConfig.json'
 $laneRoot = Join-Path $env:LOCALAPPDATA 'FranFkntastic\ComplicatedMarketBoard\dev-lanes'
@@ -275,13 +279,13 @@ if (-not $before.isLoaded -or -not $before.isDev) {
 
 $buildDirectory = $sourceDirectory
 $temporaryBuildRoot = $null
-if ($Profile -eq 'Secondary') {
-    $temporaryBuildRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cmb-secondary-$([Guid]::NewGuid().ToString('N'))"
+if ($Profile -ne 'Primary') {
+    $temporaryBuildRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cmb-staged-$([Guid]::NewGuid().ToString('N'))"
     $buildDirectory = Join-Path $temporaryBuildRoot 'output'
 }
 
 $buildArguments = @('build', $project, '-c', 'Debug', '--no-restore', '--no-incremental')
-if ($Profile -eq 'Secondary') {
+if ($Profile -ne 'Primary') {
     $buildArguments += "-p:OutputPath=$buildDirectory"
 }
 & dotnet @buildArguments
@@ -306,10 +310,10 @@ $deploymentReceipt = $null
 $deploymentBackupRoot = $null
 $deploymentTargetDirectory = $null
 $deploymentOriginalFiles = @()
-if ($Profile -eq 'Secondary') {
+if ($Profile -ne 'Primary') {
     try {
         $deploymentTargetDirectory = [System.IO.Path]::GetDirectoryName($registeredDll)
-        $deploymentBackupRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cmb-secondary-backup-$([Guid]::NewGuid().ToString('N'))"
+        $deploymentBackupRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cmb-staged-backup-$([Guid]::NewGuid().ToString('N'))"
         [System.IO.Directory]::CreateDirectory($deploymentBackupRoot) | Out-Null
         if (Test-Path -LiteralPath $deploymentTargetDirectory -PathType Container) {
             $deploymentOriginalFiles = @([System.IO.Directory]::EnumerateFiles(
@@ -359,14 +363,14 @@ do {
 } while ([DateTimeOffset]::UtcNow -lt $deadline)
 
 if ($null -eq $after) {
-    if ($Profile -eq 'Secondary') {
+    if ($Profile -ne 'Primary') {
         Restore-DirectoryBackup -Backup $deploymentBackupRoot -Destination $deploymentTargetDirectory -OriginalFiles $deploymentOriginalFiles
         Remove-TemporaryBuildRoot $deploymentBackupRoot
     }
     throw "$Profile did not advertise the expected CMB commit '$commit' before the deployment timeout."
 }
 
-if ($Profile -eq 'Secondary') {
+if ($Profile -ne 'Primary') {
     $loadedDestinationHash = (Get-FileHash -LiteralPath $registeredDll -Algorithm SHA256).Hash
     if (-not [string]::Equals($loadedDestinationHash, $sourceHash, [StringComparison]::OrdinalIgnoreCase)) {
         Restore-DirectoryBackup -Backup $deploymentBackupRoot -Destination $deploymentTargetDirectory -OriginalFiles $deploymentOriginalFiles
