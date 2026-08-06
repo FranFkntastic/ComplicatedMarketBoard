@@ -7,7 +7,6 @@ using Dalamud.Interface.ImGuiNotification;
 using Dalamud.Interface.Textures;
 using Lumina.Excel.Sheets;
 using Lumina.Extensions;
-using Miosuke.Configuration;
 using Miosuke.UiHelper;
 using ComplicatedMarketBoard.Integrations.Universalis;
 using ComplicatedMarketBoard.Assets;

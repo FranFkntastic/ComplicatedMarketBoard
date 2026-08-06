@@ -5,7 +5,6 @@ using ComplicatedMarketBoard.Assets;
 using Miosuke.UiHelper;
 using Dalamud.Interface.Style;
 using Dalamud.Interface.ImGuiNotification;
-using Miosuke.Configuration;
 using Lumina.Excel.Sheets;
 using Lumina.Extensions;
 using Dalamud.Bindings.ImGui;

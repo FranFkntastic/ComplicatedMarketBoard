@@ -3,7 +3,6 @@ using Dalamud.Interface.Components;
 using ComplicatedMarketBoard.Assets;
 using ComplicatedMarketBoard.Market;
 using ComplicatedMarketBoard.Windows.Controls;
-using Miosuke.Configuration;
 using Miosuke.UiHelper;
 
 namespace ComplicatedMarketBoard.Windows;
