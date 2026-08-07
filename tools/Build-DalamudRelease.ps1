@@ -73,10 +73,16 @@ $packageFiles = @(
     "$pluginName.deps.json",
     "$pluginName.json",
     "$pluginName.xml",
+    "ECommons.dll",
+    "Franthropy.AgentBridge.dll",
     "Franthropy.Dalamud.dll",
-    "Franthropy.Dalamud.xml",
-    "Miosuke.dll",
-    "Miosuke.xml"
+    "Franthropy.Filtering.dll",
+    "Franthropy.Observations.dll",
+    "Microsoft.Data.Sqlite.dll",
+    "SQLitePCLRaw.batteries_v2.dll",
+    "SQLitePCLRaw.core.dll",
+    "SQLitePCLRaw.provider.e_sqlite3.dll",
+    "System.Security.Cryptography.ProtectedData.dll"
 )
 
 foreach ($fileName in $packageFiles) {
