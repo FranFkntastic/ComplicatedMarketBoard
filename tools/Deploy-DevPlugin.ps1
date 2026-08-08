@@ -21,6 +21,7 @@ $ErrorActionPreference = 'Stop'
 $repository = Split-Path -Parent $PSScriptRoot
 $workspace = Split-Path -Parent $repository
 $project = Join-Path $repository 'ComplicatedMarketBoard\ComplicatedMarketBoard.csproj'
+$franthropyCommitPath = Join-Path $repository 'Franthropy.commit'
 $sourceDirectory = Join-Path $repository 'ComplicatedMarketBoard\bin\Debug'
 $sourceDll = Join-Path $sourceDirectory 'ComplicatedMarketBoard.dll'
 $profileKey = $Profile.ToLowerInvariant()
@@ -251,6 +252,15 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and -not $commit.StartsW
 }
 
 $franthropy = Join-Path $workspace 'Franthropy'
+$requiredFranthropyCommit = if (Test-Path -LiteralPath $franthropyCommitPath -PathType Leaf) {
+    (Get-Content -LiteralPath $franthropyCommitPath -Raw).Trim()
+}
+else {
+    throw "CMB's Franthropy consumer receipt is missing at '$franthropyCommitPath'."
+}
+if ($requiredFranthropyCommit -notmatch '^[0-9a-fA-F]{40}$') {
+    throw "CMB's Franthropy consumer receipt is not a full Git commit."
+}
 $franthropyDirty = (& git -C $franthropy status --porcelain=v1 --untracked-files=all | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace($franthropyDirty)) {
     throw "Franthropy must be a clean sibling checkout before CMB deployment."
@@ -258,6 +268,10 @@ if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace($franthropyDirty))
 & git -C $franthropy merge-base --is-ancestor HEAD origin/main
 if ($LASTEXITCODE -ne 0) {
     throw "Franthropy HEAD is not published on origin/main."
+}
+& git -C $franthropy merge-base --is-ancestor $requiredFranthropyCommit HEAD
+if ($LASTEXITCODE -ne 0) {
+    throw "Franthropy HEAD does not contain CMB's required revision '$requiredFranthropyCommit'."
 }
 
 $registeredDll = Get-RegisteredDllPath
