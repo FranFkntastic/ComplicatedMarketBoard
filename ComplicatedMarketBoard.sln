@@ -5,8 +5,6 @@ VisualStudioVersion = 17.11.35312.102
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ComplicatedMarketBoard", "ComplicatedMarketBoard\ComplicatedMarketBoard.csproj", "{13C812E9-0D42-4B95-8646-40EEBF30636F}"
 EndProject
-Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "Franthropy.Dalamud", "..\Franthropy\src\Franthropy.Dalamud\Franthropy.Dalamud.csproj", "{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}"
-EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ComplicatedMarketBoard.Tests", "tests\ComplicatedMarketBoard.Tests\ComplicatedMarketBoard.Tests.csproj", "{96F707DF-3662-416B-9DAD-3BE871DC3B5E}"
 EndProject
 Global
@@ -25,14 +23,6 @@ Global
 		{13C812E9-0D42-4B95-8646-40EEBF30636F}.Release|Any CPU.Build.0 = Release|Any CPU
 		{13C812E9-0D42-4B95-8646-40EEBF30636F}.Release|x64.ActiveCfg = Release|Any CPU
 		{13C812E9-0D42-4B95-8646-40EEBF30636F}.Release|x64.Build.0 = Release|Any CPU
-		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Debug|x64.ActiveCfg = Debug|x64
-		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Debug|x64.Build.0 = Debug|x64
-		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Release|Any CPU.Build.0 = Release|Any CPU
-		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Release|x64.ActiveCfg = Release|x64
-		{0C2AC325-C013-4ED8-B1A3-C72FD2CADFFA}.Release|x64.Build.0 = Release|x64
 		{96F707DF-3662-416B-9DAD-3BE871DC3B5E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{96F707DF-3662-416B-9DAD-3BE871DC3B5E}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{96F707DF-3662-416B-9DAD-3BE871DC3B5E}.Debug|x64.ActiveCfg = Debug|Any CPU
