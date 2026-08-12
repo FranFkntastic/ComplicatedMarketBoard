@@ -12,15 +12,34 @@ public sealed record MarketMinimumProbe(
 public sealed record MarketFreshnessProbe(
     string TargetName,
     MarketMinimumProbe? Nq,
-    MarketMinimumProbe? Hq);
+    MarketMinimumProbe? Hq,
+    long UploadTime = 0);
 
-public sealed record MarketFreshnessMatch(bool IsCurrent, string Detail)
+public enum MarketFreshnessGapKind
+{
+    AggregateAhead,
+    Conflict,
+}
+
+public sealed record MarketFreshnessGap(
+    string WorldName,
+    long AggregateUploadTime,
+    long DetailedUploadTime,
+    MarketFreshnessGapKind Kind,
+    string Detail);
+
+public sealed record MarketFreshnessMatch(
+    bool IsCurrent,
+    string Detail,
+    IReadOnlyList<MarketFreshnessGap> Gaps)
 {
     public static MarketFreshnessMatch Current(string detail = "")
-        => new(true, detail);
+        => new(true, detail, []);
 
-    public static MarketFreshnessMatch Stale(string detail)
-        => new(false, detail);
+    public static MarketFreshnessMatch Stale(
+        string detail,
+        params MarketFreshnessGap[] gaps)
+        => new(false, detail, gaps);
 }
 
 public static class MarketFreshnessMatcher
@@ -34,7 +53,10 @@ public static class MarketFreshnessMatcher
         int listingLimit)
     {
         var acceptedDetails = new List<string>();
-        var isTruncated = listingLimit > 0 && detailed.RawListingCount >= listingLimit;
+        var gaps = new List<MarketFreshnessGap>();
+        var isTruncated = detailed.ListingRequestLimit > 0
+            ? detailed.ListingPageMayBeTruncated
+            : listingLimit > 0 && detailed.RawListingCount >= listingLimit;
         var cutoffPrice = isTruncated
             ? detailed.RawListingCutoffPrice
             : null;
@@ -44,14 +66,22 @@ public static class MarketFreshnessMatcher
             var nqMatch = hqOnly
                 ? MarketFreshnessMatch.Current()
                 : CompareWorldQuality(probe, probe.Nq, detailed, false, cutoffPrice);
-            if (!nqMatch.IsCurrent)
-                return nqMatch;
-            AddAcceptedDetail(acceptedDetails, nqMatch);
+            CollectMatch(nqMatch, acceptedDetails, gaps);
 
             var hqMatch = CompareWorldQuality(probe, probe.Hq, detailed, true, cutoffPrice);
-            if (!hqMatch.IsCurrent)
-                return hqMatch;
-            AddAcceptedDetail(acceptedDetails, hqMatch);
+            CollectMatch(hqMatch, acceptedDetails, gaps);
+        }
+
+        if (gaps.Count > 0)
+        {
+            var uniqueGaps = gaps
+                .GroupBy(gap => (gap.WorldName, gap.Kind), StringTupleComparer.OrdinalIgnoreCase)
+                .Select(group => group.OrderByDescending(gap => gap.AggregateUploadTime).First())
+                .ToArray();
+            return new MarketFreshnessMatch(
+                false,
+                string.Join(" ", uniqueGaps.Select(gap => gap.Detail)),
+                uniqueGaps);
         }
 
         return MarketFreshnessMatch.Current(string.Join(" ", acceptedDetails));
@@ -166,6 +196,10 @@ public static class MarketFreshnessMatcher
         long? cutoffPrice)
     {
         var qualityLabel = hq ? "HQ" : "NQ";
+        var aggregateUploadTime = expected?.UploadTime ?? probe.UploadTime;
+        var detailedUploadTime = detailed.WorldUploadTimes.TryGetValue(probe.TargetName, out var uploadTime)
+            ? uploadTime
+            : 0;
         var actual = detailed.Listings
             .Where(listing => listing.Hq == hq && ListingMatchesWorld(listing, probe))
             .OrderBy(listing => listing.PricePerUnit)
@@ -174,10 +208,19 @@ public static class MarketFreshnessMatcher
 
         if (expected is null)
         {
-            return actual is null
-                ? MarketFreshnessMatch.Current()
-                : MarketFreshnessMatch.Stale(
-                    $"Universalis now reports no {qualityLabel} listings on {probe.TargetName}, but detailed listings still contain {actual.PricePerUnit:N0} gil.");
+            if (actual is null)
+                return CompareUploadRevision(
+                    aggregateUploadTime,
+                    detailedUploadTime,
+                    probe.TargetName,
+                    qualityLabel);
+
+            return ResolveContentDisagreement(
+                probe.TargetName,
+                qualityLabel,
+                aggregateUploadTime,
+                detailedUploadTime,
+                $"Universalis now reports no {qualityLabel} listings on {probe.TargetName}, but detailed listings still contain {actual.PricePerUnit:N0} gil.");
         }
 
         if (actual is null)
@@ -185,24 +228,26 @@ public static class MarketFreshnessMatcher
             if (cutoffPrice is not null && expected.PricePerUnit >= cutoffPrice.Value)
                 return MarketFreshnessMatch.Current();
 
-            return MarketFreshnessMatch.Stale(
+            return ResolveContentDisagreement(
+                probe.TargetName,
+                qualityLabel,
+                aggregateUploadTime,
+                detailedUploadTime,
                 $"Universalis reports a current {qualityLabel} minimum of {expected.PricePerUnit:N0} gil on {probe.TargetName}, but the detailed scope is missing it.");
         }
 
         if (actual.PricePerUnit != expected.PricePerUnit)
         {
-            return MarketFreshnessMatch.Stale(
+            return ResolveContentDisagreement(
+                probe.TargetName,
+                qualityLabel,
+                aggregateUploadTime,
+                detailedUploadTime,
                 $"Universalis reports a current {qualityLabel} minimum of {expected.PricePerUnit:N0} gil on {probe.TargetName}; detailed listings still show {actual.PricePerUnit:N0} gil.");
         }
 
-        if (expected.UploadTime <= 0)
-            return MarketFreshnessMatch.Current();
-
-        var detailedUploadTime = detailed.WorldUploadTimes.TryGetValue(probe.TargetName, out var uploadTime)
-            ? uploadTime
-            : 0;
         return CompareUploadRevision(
-            expected.UploadTime,
+            aggregateUploadTime,
             detailedUploadTime,
             probe.TargetName,
             qualityLabel);
@@ -214,11 +259,26 @@ public static class MarketFreshnessMatcher
         string worldName,
         string qualityLabel)
     {
+        if (expectedUploadTime <= 0)
+            return MarketFreshnessMatch.Current();
+
         var lagMilliseconds = expectedUploadTime - detailedUploadTime;
         if (detailedUploadTime <= 0 || lagMilliseconds > UploadRevisionToleranceMilliseconds)
         {
+            var kind = detailedUploadTime > expectedUploadTime
+                ? MarketFreshnessGapKind.Conflict
+                : MarketFreshnessGapKind.AggregateAhead;
+            var detail = detailedUploadTime <= 0
+                ? $"Detailed listings for {worldName} did not include a listing revision."
+                : $"Detailed listings for {worldName} are older than Universalis's current {qualityLabel} minimum.";
             return MarketFreshnessMatch.Stale(
-                $"Detailed listings for {worldName} are older than Universalis's current {qualityLabel} minimum.");
+                detail,
+                new MarketFreshnessGap(
+                    worldName,
+                    expectedUploadTime,
+                    detailedUploadTime,
+                    kind,
+                    detail));
         }
 
         return lagMilliseconds > 0
@@ -235,6 +295,47 @@ public static class MarketFreshnessMatcher
             acceptedDetails.Add(match.Detail);
     }
 
+    private static void CollectMatch(
+        MarketFreshnessMatch match,
+        ICollection<string> acceptedDetails,
+        ICollection<MarketFreshnessGap> gaps)
+    {
+        if (match.IsCurrent)
+            AddAcceptedDetail(acceptedDetails, match);
+        else
+            foreach (var gap in match.Gaps)
+                gaps.Add(gap);
+    }
+
+    private static MarketFreshnessMatch ResolveContentDisagreement(
+        string worldName,
+        string qualityLabel,
+        long aggregateUploadTime,
+        long detailedUploadTime,
+        string disagreement)
+    {
+        if (aggregateUploadTime > 0 && detailedUploadTime > aggregateUploadTime)
+        {
+            return MarketFreshnessMatch.Current(
+                $"Accepted newer detailed {qualityLabel} listings for {worldName}; the aggregate projection is behind.");
+        }
+
+        var kind = aggregateUploadTime > detailedUploadTime
+            ? MarketFreshnessGapKind.AggregateAhead
+            : MarketFreshnessGapKind.Conflict;
+        var detail = kind == MarketFreshnessGapKind.AggregateAhead
+            ? $"{disagreement} The aggregate revision is newer, so only {worldName} requires repair."
+            : $"{disagreement} Both projections report the same revision, so the world partition is inconsistent.";
+        return MarketFreshnessMatch.Stale(
+            detail,
+            new MarketFreshnessGap(
+                worldName,
+                aggregateUploadTime,
+                detailedUploadTime,
+                kind,
+                detail));
+    }
+
     private static bool ListingMatchesWorld(
         MarketDataListing listing,
         MarketFreshnessProbe probe)
@@ -248,4 +349,18 @@ public static class MarketFreshnessMatcher
             probe.TargetName,
             StringComparison.OrdinalIgnoreCase);
     }
+}
+
+internal sealed class StringTupleComparer : IEqualityComparer<(string WorldName, MarketFreshnessGapKind Kind)>
+{
+    public static StringTupleComparer OrdinalIgnoreCase { get; } = new();
+
+    public bool Equals(
+        (string WorldName, MarketFreshnessGapKind Kind) x,
+        (string WorldName, MarketFreshnessGapKind Kind) y)
+        => x.Kind == y.Kind
+           && string.Equals(x.WorldName, y.WorldName, StringComparison.OrdinalIgnoreCase);
+
+    public int GetHashCode((string WorldName, MarketFreshnessGapKind Kind) obj)
+        => HashCode.Combine(StringComparer.OrdinalIgnoreCase.GetHashCode(obj.WorldName), obj.Kind);
 }

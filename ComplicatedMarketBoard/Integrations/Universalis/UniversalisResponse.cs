@@ -117,6 +117,21 @@ public class UniversalisResponse
     public long? RawListingCutoffPrice { get; set; }
 
     /// <summary>
+    /// Gets the listing limit used for the final upstream page.
+    /// </summary>
+    public int ListingRequestLimit { get; set; }
+
+    /// <summary>
+    /// Gets whether the final upstream listing page may have been truncated.
+    /// </summary>
+    public bool ListingPageMayBeTruncated { get; set; }
+
+    /// <summary>
+    /// Gets listing identities whose repeated rows disagreed on listing facts.
+    /// </summary>
+    public IReadOnlyList<MarketListingIdentity> ConflictingListingIdentities { get; set; } = [];
+
+    /// <summary>
     /// Gets or sets the listings.
     /// </summary>
     [JsonPropertyName("listings")]
