@@ -26,6 +26,14 @@ public sealed class UniversalisReconciliationPolicyTests
     }
 
     [Fact]
+    public void DuplicateLimitedPageStopsWhenLargerRequestAddsNoUniqueListings()
+    {
+        Assert.Null(UniversalisListingFetchPolicy.GetNextRequestLimit(70, 140, 140, 28, 28));
+        Assert.Null(UniversalisListingFetchPolicy.GetNextRequestLimit(70, 140, 140, 20, 28));
+        Assert.Equal(280, UniversalisListingFetchPolicy.GetNextRequestLimit(70, 140, 140, 29, 28));
+    }
+
+    [Fact]
     public void AdaptiveOverfetchIsBounded()
     {
         Assert.Equal(
@@ -50,6 +58,22 @@ public sealed class UniversalisReconciliationPolicyTests
         var current = Gap(aggregate: 2_000, detailed: 1_500);
 
         Assert.True(MarketFreshnessRetryPolicy.HasRevisionChange([previous], [current]));
+    }
+
+    [Theory]
+    [InlineData(1, 32, false)]
+    [InlineData(4, 32, false)]
+    [InlineData(4, 8, true)]
+    [InlineData(8, 32, true)]
+    [InlineData(18, 32, true)]
+    public void WidespreadDisagreementUsesOneScopeRepair(
+        int aggregateAheadWorlds,
+        int scopeWorlds,
+        bool expected)
+    {
+        Assert.Equal(
+            expected,
+            MarketFreshnessRetryPolicy.ShouldUseScopeRepair(aggregateAheadWorlds, scopeWorlds));
     }
 
     [Theory]
