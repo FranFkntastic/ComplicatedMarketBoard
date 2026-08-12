@@ -1,6 +1,7 @@
 name: Render safety
 
 on:
+  # This maintained fork integrates on master; upstream SimpleMarketBoard uses main.
   pull_request:
     branches: [master]
   push:
