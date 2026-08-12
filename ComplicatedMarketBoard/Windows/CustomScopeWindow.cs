@@ -94,8 +94,13 @@ public class CustomScopeWindow : Window, IDisposable
             return;
         }
 
+        var listHeight = string.IsNullOrEmpty(editingCustomScopeId)
+            ? 0f
+            : Math.Clamp(ImGui.GetContentRegionAvail().Y * 0.35f, 140f, 220f);
+        ImGui.BeginChild($"{suffix}-scope-list", new Vector2(0, listHeight), true);
         pendingDeleteIndex = null;
         DalamudVirtualizedRows.Draw(P.Config.CustomMarketScopes, scopeRowRenderer);
+        ImGui.EndChild();
         if (pendingDeleteIndex is { } deleteIndex)
             DeleteScope(deleteIndex);
 
@@ -105,6 +110,7 @@ public class CustomScopeWindow : Window, IDisposable
 
         ImGui.Separator();
         ImGui.TextColored(Ui.ColourCyan, $"Editing {editingScope.Name}");
+        ImGui.BeginChild($"{suffix}-scope-editor", Vector2.Zero, false);
         ScopeTreeEditor.Draw(
             editingScope.IncludedScopes,
             $"{suffix}-{editingScope.Id}-picker",
@@ -116,6 +122,7 @@ public class CustomScopeWindow : Window, IDisposable
             editingScope.IncludedScopes,
             $"{suffix}-{editingScope.Id}-unknown",
             () => OnScopeContentsChanged(editingScope.Id));
+        ImGui.EndChild();
     }
 
     private void DrawScopeRow(CustomMarketScope customScope, int index)

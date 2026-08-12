@@ -127,6 +127,17 @@ public sealed class RenderPathBoundaryTests
         Assert.Contains("++chartRevision", source, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CustomScopeEditorHasAnIndependentVisiblePane()
+    {
+        var source = ReadSource("ComplicatedMarketBoard", "Windows", "CustomScopeWindow.cs");
+        var body = ExtractMethodBody(source, "Draw");
+
+        Assert.Contains("-scope-list", body, StringComparison.Ordinal);
+        Assert.Contains("-scope-editor", body, StringComparison.Ordinal);
+        Assert.Contains("DalamudVirtualizedRows.Draw", body, StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("MainWindow.cs", "Draw")]
     [InlineData("MainWindow.cs", "DrawMmfBuyButton")]
