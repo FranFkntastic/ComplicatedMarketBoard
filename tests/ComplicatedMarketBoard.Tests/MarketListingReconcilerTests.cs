@@ -36,13 +36,56 @@ public sealed class MarketListingReconcilerTests
         Assert.Equal(1_786_496_062_700, scope.WorldUploadTimes["Faerie"]);
     }
 
-    private static MarketDataListing Listing(string id, string world, long price)
+    [Fact]
+    public void FinalizeVerifiedResponseBindsMetricsToTheirOwningFeed()
+    {
+        var listings = new UniversalisResponse
+        {
+            FetchTime = 100,
+            UnitsForSale = 999,
+            AveragePrice = 1,
+            Velocity = 1,
+            Listings =
+            [
+                Listing("third", "Faerie", 300, quantity: 30),
+                Listing("first", "Siren", 100, quantity: 10),
+                Listing("second", "Faerie", 200, quantity: 20),
+            ],
+        };
+        var sale = new MarketDataEntry { PricePerUnit = 42 };
+        var history = new UniversalisResponse
+        {
+            FetchTime = 200,
+            AveragePrice = 42,
+            AveragePriceNq = 41,
+            AveragePriceHq = 43,
+            Velocity = 3,
+            VelocityNq = 2,
+            VelocityHq = 1,
+            Entries = [sale],
+        };
+
+        var result = MarketListingReconciler.FinalizeVerifiedResponse(listings, history, listingLimit: 2);
+
+        Assert.Equal(["first", "second"], result.Listings.Select(listing => listing.ListingId));
+        Assert.Equal(30, result.UnitsForSale);
+        Assert.Same(sale, Assert.Single(result.Entries));
+        Assert.Equal(42, result.AveragePrice);
+        Assert.Equal(41, result.AveragePriceNq);
+        Assert.Equal(43, result.AveragePriceHq);
+        Assert.Equal(3, result.Velocity);
+        Assert.Equal(2, result.VelocityNq);
+        Assert.Equal(1, result.VelocityHq);
+        Assert.Equal(200, result.FetchTime);
+    }
+
+    private static MarketDataListing Listing(string id, string world, long price, long quantity = 1)
         => new()
         {
             ListingId = id,
             WorldName = world,
             PricePerUnit = price,
-            Quantity = 1,
+            Quantity = quantity,
             LastReviewTime = 1,
         };
 }

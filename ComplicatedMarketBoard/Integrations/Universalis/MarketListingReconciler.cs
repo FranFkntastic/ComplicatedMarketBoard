@@ -2,6 +2,31 @@ namespace ComplicatedMarketBoard.Integrations.Universalis;
 
 public static class MarketListingReconciler
 {
+    public static UniversalisResponse FinalizeVerifiedResponse(
+        UniversalisResponse listings,
+        UniversalisResponse history,
+        int listingLimit)
+    {
+        ArgumentNullException.ThrowIfNull(listings);
+        ArgumentNullException.ThrowIfNull(history);
+
+        listings.Listings = listings.Listings
+            .OrderBy(listing => listing.PricePerUnit)
+            .ThenBy(listing => listing.Quantity)
+            .Take(Math.Max(0, listingLimit))
+            .ToList();
+        listings.UnitsForSale = listings.Listings.Sum(listing => listing.Quantity);
+        listings.Entries = history.Entries;
+        listings.AveragePrice = history.AveragePrice;
+        listings.AveragePriceNq = history.AveragePriceNq;
+        listings.AveragePriceHq = history.AveragePriceHq;
+        listings.Velocity = history.Velocity;
+        listings.VelocityNq = history.VelocityNq;
+        listings.VelocityHq = history.VelocityHq;
+        listings.FetchTime = Math.Max(listings.FetchTime, history.FetchTime);
+        return listings;
+    }
+
     public static void ReplaceWorldPartition(
         UniversalisResponse scope,
         string worldName,

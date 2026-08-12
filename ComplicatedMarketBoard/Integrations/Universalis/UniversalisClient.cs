@@ -375,7 +375,10 @@ public sealed class UniversalisClient
                 targetName,
                 lastMatch.Detail,
                 verificationPass: 1);
-            return FinalizeVerifiedResponse(detailed, history, P.Config.UniversalisListings);
+            return MarketListingReconciler.FinalizeVerifiedResponse(
+                detailed,
+                history,
+                P.Config.UniversalisListings);
         }
 
         var conflict = lastMatch.Gaps.FirstOrDefault(gap => gap.Kind == MarketFreshnessGapKind.Conflict);
@@ -541,7 +544,10 @@ public sealed class UniversalisClient
             targetName,
             $"Accepted after targeted repair of {string.Join(", ", repairedPartitions.Keys)}.",
             verificationPass: verificationPass);
-        return FinalizeVerifiedResponse(detailed, history, P.Config.UniversalisListings);
+        return MarketListingReconciler.FinalizeVerifiedResponse(
+            detailed,
+            history,
+            P.Config.UniversalisListings);
 
         async Task<(int Index, string WorldName, MarketFreshnessProbe? Probe, UniversalisResponse? Failure)> FetchWorldProbeAsync(
             int index,
@@ -953,21 +959,6 @@ public sealed class UniversalisClient
                 verificationPass: verificationPass + adaptivePass);
             requestLimit = nextLimit.Value;
         }
-    }
-
-    private static UniversalisResponse FinalizeVerifiedResponse(
-        UniversalisResponse listings,
-        UniversalisResponse history,
-        int listingLimit)
-    {
-        listings.Listings = listings.Listings
-            .OrderBy(listing => listing.PricePerUnit)
-            .ThenBy(listing => listing.Quantity)
-            .Take(listingLimit)
-            .ToList();
-        listings.Entries = history.Entries;
-        listings.FetchTime = Math.Max(listings.FetchTime, history.FetchTime);
-        return listings;
     }
 
     private static UniversalisResponse CreateStaleResponse(

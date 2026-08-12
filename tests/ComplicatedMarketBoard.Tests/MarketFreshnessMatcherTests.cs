@@ -96,7 +96,7 @@ public sealed class MarketFreshnessMatcherTests
     {
         var probe = new MarketFreshnessProbe(
             "Siren",
-            new MarketMinimumProbe(false, 1_225_000, 64, "Siren", 1_785_615_927_911),
+            new MarketMinimumProbe(false, 1_225_000, 57, "Siren", 1_785_615_927_911),
             null);
         var detailed = new UniversalisResponse
         {
@@ -107,7 +107,7 @@ public sealed class MarketFreshnessMatcherTests
                 {
                     PricePerUnit = 1_225_000,
                     Quantity = 1,
-                    WorldID = 64,
+                    WorldID = 57,
                     WorldName = "Siren",
                 },
             ],
@@ -132,7 +132,7 @@ public sealed class MarketFreshnessMatcherTests
     {
         var probe = new MarketFreshnessProbe(
             "Siren",
-            new MarketMinimumProbe(false, 1_225_000, 64, "Siren", 1_785_615_927_911),
+            new MarketMinimumProbe(false, 1_225_000, 57, "Siren", 1_785_615_927_911),
             null);
         var detailed = new UniversalisResponse
         {
@@ -143,7 +143,7 @@ public sealed class MarketFreshnessMatcherTests
                 {
                     PricePerUnit = 1_350_000,
                     Quantity = 1,
-                    WorldID = 64,
+                    WorldID = 57,
                     WorldName = "Siren",
                 },
             ],
@@ -170,7 +170,7 @@ public sealed class MarketFreshnessMatcherTests
     {
         var probe = new MarketFreshnessProbe(
             "Siren",
-            new MarketMinimumProbe(false, 569_999, 64, "Siren", 1_786_496_062_810),
+            new MarketMinimumProbe(false, 569_999, 57, "Siren", 1_786_496_062_810),
             null,
             1_786_496_062_810);
         var detailed = new UniversalisResponse
@@ -182,7 +182,7 @@ public sealed class MarketFreshnessMatcherTests
                 {
                     PricePerUnit = 495_000,
                     Quantity = 1,
-                    WorldID = 64,
+                    WorldID = 57,
                     WorldName = "Siren",
                 },
             ],
@@ -212,7 +212,7 @@ public sealed class MarketFreshnessMatcherTests
         {
             new MarketFreshnessProbe(
                 "Siren",
-                new MarketMinimumProbe(false, 569_999, 64, "Siren", 2_007),
+                new MarketMinimumProbe(false, 569_999, 57, "Siren", 2_007),
                 null,
                 2_007),
             new MarketFreshnessProbe(
@@ -225,7 +225,7 @@ public sealed class MarketFreshnessMatcherTests
         {
             Listings =
             [
-                new MarketDataListing { PricePerUnit = 495_000, Quantity = 1, WorldID = 64, WorldName = "Siren" },
+                new MarketDataListing { PricePerUnit = 495_000, Quantity = 1, WorldID = 57, WorldName = "Siren" },
                 new MarketDataListing { PricePerUnit = 570_000, Quantity = 1, WorldID = 54, WorldName = "Faerie" },
             ],
             WorldUploadTimes = new Dictionary<string, long>
@@ -278,7 +278,7 @@ public sealed class MarketFreshnessMatcherTests
     {
         var probe = new MarketFreshnessProbe(
             "Siren",
-            new MarketMinimumProbe(false, 569_999, 64, "Siren", 2_000),
+            new MarketMinimumProbe(false, 569_999, 57, "Siren", 2_000),
             null,
             2_000);
         var detailed = Response(new MarketDataListing
@@ -288,7 +288,7 @@ public sealed class MarketFreshnessMatcherTests
             WorldID = 54,
             WorldName = "Faerie",
         }, uploadTime: 2_001);
-        detailed.Listings[0].WorldID = 64;
+        detailed.Listings[0].WorldID = 57;
         detailed.Listings[0].WorldName = "Siren";
         detailed.WorldUploadTimes = new Dictionary<string, long> { ["Siren"] = 2_001 };
 
@@ -307,7 +307,7 @@ public sealed class MarketFreshnessMatcherTests
     {
         var probe = new MarketFreshnessProbe(
             "Siren",
-            new MarketMinimumProbe(false, 569_999, 64, "Siren", 2_000),
+            new MarketMinimumProbe(false, 569_999, 57, "Siren", 2_000),
             null,
             2_000);
         var detailed = new UniversalisResponse
@@ -318,7 +318,7 @@ public sealed class MarketFreshnessMatcherTests
                 {
                     PricePerUnit = 495_000,
                     Quantity = 1,
-                    WorldID = 64,
+                    WorldID = 57,
                     WorldName = "Siren",
                 },
             ],
