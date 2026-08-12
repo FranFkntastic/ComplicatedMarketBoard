@@ -162,6 +162,177 @@ public sealed class MarketFreshnessMatcherTests
         Assert.False(result.IsCurrent);
         Assert.Contains("1,225,000", result.Detail);
         Assert.Contains("1,350,000", result.Detail);
+        Assert.Equal(MarketFreshnessGapKind.AggregateAhead, Assert.Single(result.Gaps).Kind);
+    }
+
+    [Fact]
+    public void CompareScope_ClassifiesObservedSharkBowSequenceAsTargetedRepair()
+    {
+        var probe = new MarketFreshnessProbe(
+            "Siren",
+            new MarketMinimumProbe(false, 569_999, 64, "Siren", 1_786_496_062_810),
+            null,
+            1_786_496_062_810);
+        var detailed = new UniversalisResponse
+        {
+            Status = UniversalisResponseStatus.Success,
+            Listings =
+            [
+                new MarketDataListing
+                {
+                    PricePerUnit = 495_000,
+                    Quantity = 1,
+                    WorldID = 64,
+                    WorldName = "Siren",
+                },
+            ],
+            WorldUploadTimes = new Dictionary<string, long>
+            {
+                ["Siren"] = 1_786_496_062_803,
+            },
+        };
+
+        var result = MarketFreshnessMatcher.CompareScope(
+            [probe],
+            detailed,
+            hqOnly: false,
+            listingLimit: 70);
+
+        var gap = Assert.Single(result.Gaps);
+        Assert.False(result.IsCurrent);
+        Assert.Equal("Siren", gap.WorldName);
+        Assert.Equal(MarketFreshnessGapKind.AggregateAhead, gap.Kind);
+        Assert.Equal(7, gap.AggregateUploadTime - gap.DetailedUploadTime);
+    }
+
+    [Fact]
+    public void CompareScope_LeavesCurrentWorldsOutOfTargetedRepair()
+    {
+        var probes = new[]
+        {
+            new MarketFreshnessProbe(
+                "Siren",
+                new MarketMinimumProbe(false, 569_999, 64, "Siren", 2_007),
+                null,
+                2_007),
+            new MarketFreshnessProbe(
+                "Faerie",
+                new MarketMinimumProbe(false, 570_000, 54, "Faerie", 2_000),
+                null,
+                2_000),
+        };
+        var detailed = new UniversalisResponse
+        {
+            Listings =
+            [
+                new MarketDataListing { PricePerUnit = 495_000, Quantity = 1, WorldID = 64, WorldName = "Siren" },
+                new MarketDataListing { PricePerUnit = 570_000, Quantity = 1, WorldID = 54, WorldName = "Faerie" },
+            ],
+            WorldUploadTimes = new Dictionary<string, long>
+            {
+                ["Siren"] = 2_000,
+                ["Faerie"] = 2_000,
+            },
+        };
+
+        var result = MarketFreshnessMatcher.CompareScope(probes, detailed, false, 70);
+
+        Assert.Equal("Siren", Assert.Single(result.Gaps).WorldName);
+    }
+
+    [Fact]
+    public void CompareScope_OrdinaryThirtyTwoWorldPathRemainsCpuCheap()
+    {
+        var probes = Enumerable.Range(1, 32)
+            .Select(index => new MarketFreshnessProbe(
+                $"World {index}",
+                new MarketMinimumProbe(false, 100 + index, (uint)index, $"World {index}", 2_000),
+                null,
+                2_000))
+            .ToArray();
+        var detailed = new UniversalisResponse
+        {
+            Listings = probes.Select((probe, index) => new MarketDataListing
+            {
+                PricePerUnit = 101 + index,
+                Quantity = 1,
+                WorldID = (ulong)(index + 1),
+                WorldName = probe.TargetName,
+            }).ToArray(),
+            WorldUploadTimes = probes.ToDictionary(probe => probe.TargetName, _ => 2_000L),
+            ListingRequestLimit = 70,
+            ListingPageMayBeTruncated = false,
+        };
+
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+        for (var iteration = 0; iteration < 1_000; iteration++)
+            Assert.True(MarketFreshnessMatcher.CompareScope(probes, detailed, false, 70).IsCurrent);
+        stopwatch.Stop();
+        Console.WriteLine($"1,000 32-world comparisons: {stopwatch.Elapsed.TotalMilliseconds:F1} ms");
+
+        Assert.True(stopwatch.Elapsed < TimeSpan.FromSeconds(2), $"Matcher took {stopwatch.Elapsed}.");
+    }
+
+    [Fact]
+    public void CompareScope_AcceptsDetailedPartitionNewerThanAggregate()
+    {
+        var probe = new MarketFreshnessProbe(
+            "Siren",
+            new MarketMinimumProbe(false, 569_999, 64, "Siren", 2_000),
+            null,
+            2_000);
+        var detailed = Response(new MarketDataListing
+        {
+            PricePerUnit = 495_000,
+            Quantity = 1,
+            WorldID = 54,
+            WorldName = "Faerie",
+        }, uploadTime: 2_001);
+        detailed.Listings[0].WorldID = 64;
+        detailed.Listings[0].WorldName = "Siren";
+        detailed.WorldUploadTimes = new Dictionary<string, long> { ["Siren"] = 2_001 };
+
+        var result = MarketFreshnessMatcher.CompareScope(
+            [probe],
+            detailed,
+            hqOnly: false,
+            listingLimit: 70);
+
+        Assert.True(result.IsCurrent);
+        Assert.Contains("newer detailed", result.Detail);
+    }
+
+    [Fact]
+    public void CompareScope_RejectsEqualRevisionPriceConflict()
+    {
+        var probe = new MarketFreshnessProbe(
+            "Siren",
+            new MarketMinimumProbe(false, 569_999, 64, "Siren", 2_000),
+            null,
+            2_000);
+        var detailed = new UniversalisResponse
+        {
+            Listings =
+            [
+                new MarketDataListing
+                {
+                    PricePerUnit = 495_000,
+                    Quantity = 1,
+                    WorldID = 64,
+                    WorldName = "Siren",
+                },
+            ],
+            WorldUploadTimes = new Dictionary<string, long> { ["Siren"] = 2_000 },
+        };
+
+        var result = MarketFreshnessMatcher.CompareScope(
+            [probe],
+            detailed,
+            hqOnly: false,
+            listingLimit: 70);
+
+        Assert.False(result.IsCurrent);
+        Assert.Equal(MarketFreshnessGapKind.Conflict, Assert.Single(result.Gaps).Kind);
     }
 
     [Fact]
@@ -370,14 +541,18 @@ public sealed class MarketFreshnessMatcherTests
         bool expectedCurrent)
     {
         var rawListings = Enumerable.Range(0, 50)
-            .Select(index => new MarketDataListing
+            .Select(index =>
             {
-                ListingId = $"listing-{index % 7}",
-                LastReviewTime = index,
-                PricePerUnit = index == 49 ? 600_001 : 33,
-                Quantity = 1_000,
-                WorldID = 411,
-                WorldName = "Golem",
+                var identityIndex = index % 7;
+                return new MarketDataListing
+                {
+                    ListingId = $"listing-{identityIndex}",
+                    LastReviewTime = identityIndex,
+                    PricePerUnit = identityIndex == 6 ? 600_001 : 33,
+                    Quantity = 1_000,
+                    WorldID = 411,
+                    WorldName = "Golem",
+                };
             })
             .ToList();
         var probes = new[]

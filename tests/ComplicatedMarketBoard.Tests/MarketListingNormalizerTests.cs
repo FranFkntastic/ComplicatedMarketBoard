@@ -17,15 +17,39 @@ public sealed class MarketListingNormalizerTests
     }
 
     [Fact]
-    public void Normalize_CollapsesRepeatedIdentityAndKeepsNewestObservation()
+    public void Analyze_CollapsesByteEquivalentRepeatedIdentity()
+    {
+        var first = Listing("listing-a", 73, 575_000, 100);
+        var repeated = Listing("listing-a", 73, 575_000, 100);
+
+        var result = MarketListingNormalizer.Analyze([first, repeated]);
+
+        Assert.Same(first, Assert.Single(result.Listings));
+        Assert.Empty(result.Conflicts);
+        Assert.Equal(1, result.DuplicateCount);
+    }
+
+    [Fact]
+    public void Analyze_QuarantinesConflictingRepeatedIdentity()
+    {
+        var first = Listing("listing-a", 73, 575_000, 100);
+        var conflicting = Listing("listing-a", 73, 600_000, 200);
+
+        var result = MarketListingNormalizer.Analyze([first, conflicting]);
+
+        Assert.Empty(result.Listings);
+        Assert.Equal(new MarketListingIdentity("id:73", "listing-a"), Assert.Single(result.Conflicts));
+    }
+
+    [Fact]
+    public void Normalize_PreservesLegacyNewestObservationSelection()
     {
         var stale = Listing("listing-a", 73, 575_000, 100);
         var newest = Listing("listing-a", 73, 600_000, 200);
 
         var normalized = MarketListingNormalizer.Normalize([stale, newest]);
 
-        var listing = Assert.Single(normalized);
-        Assert.Same(newest, listing);
+        Assert.Same(newest, Assert.Single(normalized));
     }
 
     [Fact]
