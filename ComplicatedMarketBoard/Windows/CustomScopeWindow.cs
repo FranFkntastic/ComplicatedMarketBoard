@@ -4,7 +4,7 @@ using ComplicatedMarketBoard.Assets;
 using ComplicatedMarketBoard.Market;
 using ComplicatedMarketBoard.Windows.Controls;
 using Miosuke.UiHelper;
-using Franthropy.Dalamud.UI.Performance;
+using Franthropy.Dalamud.UI.Tables;
 
 namespace ComplicatedMarketBoard.Windows;
 
@@ -12,9 +12,12 @@ public class CustomScopeWindow : Window, IDisposable
 {
     private string newCustomScopeName = "";
     private string editingCustomScopeId = "";
+    private readonly Action<CustomMarketScope, int> scopeRowRenderer;
+    private int? pendingDeleteIndex;
 
     public CustomScopeWindow() : base("Custom Market Scopes###ComplicatedMarketBoardCustomMarketScopes")
     {
+        scopeRowRenderer = DrawScopeRow;
         Size = new Vector2(520, 620);
         SizeCondition = ImGuiCond.FirstUseEver;
     }
@@ -68,7 +71,6 @@ public class CustomScopeWindow : Window, IDisposable
         P.Config.Save();
     }
 
-    [RenderFrameWorkJustification("Editable scope rows have variable tree height and render only in the explicit scope editor.", 100)]
     public override void Draw()
     {
         var suffix = $"###{Name}";
@@ -92,37 +94,41 @@ public class CustomScopeWindow : Window, IDisposable
             return;
         }
 
-        for (var i = 0; i < P.Config.CustomMarketScopes.Count; i++)
-        {
-            var customScope = P.Config.CustomMarketScopes[i];
-            ImGui.PushID($"{suffix}-{customScope.Id}");
+        pendingDeleteIndex = null;
+        DalamudVirtualizedRows.Draw(P.Config.CustomMarketScopes, scopeRowRenderer);
+        if (pendingDeleteIndex is { } deleteIndex)
+            DeleteScope(deleteIndex);
 
-            DrawScopeHeader(customScope, ref i);
+        var editingScope = P.Config.CustomMarketScopes.FirstOrDefault(scope => scope.Id == editingCustomScopeId);
+        if (editingScope is null)
+            return;
 
-            if (editingCustomScopeId == customScope.Id)
-            {
-                ImGui.Indent();
-                ScopeTreeEditor.Draw(
-                    customScope.IncludedScopes,
-                    $"{suffix}-{customScope.Id}-picker",
-                    false,
-                    true,
-                    P.MainWindow.GetCurrentWorldScopeName(),
-                    () => OnScopeContentsChanged(customScope.Id));
-                ScopeTreeEditor.DrawUnknownSavedEntries(
-                    customScope.IncludedScopes,
-                    $"{suffix}-{customScope.Id}-unknown",
-                    () => OnScopeContentsChanged(customScope.Id));
-                ImGui.Unindent();
-            }
-
-            ImGui.PopID();
-            if (i >= 0 && i < P.Config.CustomMarketScopes.Count - 1)
-                ImGui.Separator();
-        }
+        ImGui.Separator();
+        ImGui.TextColored(Ui.ColourCyan, $"Editing {editingScope.Name}");
+        ScopeTreeEditor.Draw(
+            editingScope.IncludedScopes,
+            $"{suffix}-{editingScope.Id}-picker",
+            false,
+            true,
+            P.MainWindow.GetCurrentWorldScopeName(),
+            () => OnScopeContentsChanged(editingScope.Id));
+        ScopeTreeEditor.DrawUnknownSavedEntries(
+            editingScope.IncludedScopes,
+            $"{suffix}-{editingScope.Id}-unknown",
+            () => OnScopeContentsChanged(editingScope.Id));
     }
 
-    private void DrawScopeHeader(CustomMarketScope customScope, ref int index)
+    private void DrawScopeRow(CustomMarketScope customScope, int index)
+    {
+        var suffix = $"###{Name}";
+        ImGui.PushID($"{suffix}-{customScope.Id}");
+        DrawScopeHeader(customScope, index);
+        ImGui.PopID();
+        if (index < P.Config.CustomMarketScopes.Count - 1)
+            ImGui.Separator();
+    }
+
+    private void DrawScopeHeader(CustomMarketScope customScope, int index)
     {
         var scopeName = customScope.Name;
         ImGui.SetNextItemWidth(Math.Max(160.0f, ImGui.GetContentRegionAvail().X - 126.0f));
@@ -149,8 +155,7 @@ public class CustomScopeWindow : Window, IDisposable
         ImGui.PushFont(UiBuilder.IconFont);
         if (ImGui.Button($"{FontAwesomeIcon.Trash.ToIconString()}##delete"))
         {
-            DeleteScope(index);
-            index--;
+            pendingDeleteIndex = index;
             ImGui.PopFont();
             return;
         }

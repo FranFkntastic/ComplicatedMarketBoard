@@ -85,6 +85,7 @@ public sealed class RenderPathBoundaryTests
     [InlineData("MainWindow.cs", "DrawHistoryEntryTable")]
     [InlineData("MainWindow.cs", "DrawWorldOutdated")]
     [InlineData("MainWindow.cs", "DrawSearchHistory")]
+    [InlineData("CustomScopeWindow.cs", "Draw")]
     public void DynamicRowsUseTheVirtualizedIterationBoundary(string fileName, string methodName)
     {
         var source = ReadSource("ComplicatedMarketBoard", "Windows", fileName);
