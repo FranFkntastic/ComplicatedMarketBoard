@@ -35,7 +35,7 @@ public sealed class UniversalisReconciliationPolicyTests
     }
 
     [Fact]
-    public void UnchangedRevisionPairDoesNotRetry()
+    public void UnchangedRevisionPairIsDetectedForTargetedBackoff()
     {
         var previous = Gap(aggregate: 2_000, detailed: 1_000);
         var current = Gap(aggregate: 2_000, detailed: 1_000);
@@ -50,6 +50,24 @@ public sealed class UniversalisReconciliationPolicyTests
         var current = Gap(aggregate: 2_000, detailed: 1_500);
 
         Assert.True(MarketFreshnessRetryPolicy.HasRevisionChange([previous], [current]));
+    }
+
+    [Theory]
+    [InlineData(1, 1_000)]
+    [InlineData(2, 2_000)]
+    [InlineData(3, 4_000)]
+    [InlineData(4, 5_000)]
+    public void TargetedRepairBackoffIsExponentialAndDeadlineBounded(
+        int completedPasses,
+        int expectedMilliseconds)
+    {
+        var delay = MarketFreshnessRetryPolicy.GetBackoff(
+            completedPasses,
+            TimeSpan.FromSeconds(1),
+            TimeSpan.FromSeconds(5));
+
+        Assert.Equal(expectedMilliseconds, delay.TotalMilliseconds);
+        Assert.Equal(4, MarketFreshnessRetryPolicy.MaxTargetedRepairPasses);
     }
 
     private static MarketFreshnessGap Gap(long aggregate, long detailed)

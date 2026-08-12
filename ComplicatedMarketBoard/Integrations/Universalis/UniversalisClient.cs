@@ -395,8 +395,12 @@ public sealed class UniversalisClient
         var previousGaps = lastMatch.Gaps;
         var repairedPartitions = new Dictionary<string, UniversalisResponse>(StringComparer.OrdinalIgnoreCase);
         var verificationPass = 1;
-        while (repairWorlds.Length > 0 && DateTimeOffset.UtcNow < deadline)
+        var targetedRepairPass = 0;
+        while (repairWorlds.Length > 0
+               && targetedRepairPass < MarketFreshnessRetryPolicy.MaxTargetedRepairPasses
+               && DateTimeOffset.UtcNow < deadline)
         {
+            targetedRepairPass++;
             verificationPass++;
             Service.Log.Info(
                 $"[Universalis] Repairing {repairWorlds.Length} aggregate-ahead world partition(s) for {targetName}: " +
@@ -472,14 +476,14 @@ public sealed class UniversalisClient
             if (conflict is not null)
                 return CreateStaleResponse(vocabulary, lastMatch.Detail);
 
-            if (!MarketFreshnessRetryPolicy.HasRevisionChange(previousGaps, lastMatch.Gaps))
+            var revisionsChanged = MarketFreshnessRetryPolicy.HasRevisionChange(previousGaps, lastMatch.Gaps);
+            if (!revisionsChanged)
             {
                 TraceFetch(
                     "detail-targeted-repair-unchanged",
                     targetName,
-                    "Targeted repair returned the same revision pair; stopping without another scope scan.",
+                    $"Targeted repair returned the same revision pair on pass {targetedRepairPass}/{MarketFreshnessRetryPolicy.MaxTargetedRepairPasses}; backing off without another scope scan.",
                     verificationPass: verificationPass);
-                return CreateStaleResponse(vocabulary, lastMatch.Detail);
             }
 
             previousGaps = lastMatch.Gaps;
@@ -491,7 +495,10 @@ public sealed class UniversalisClient
             var remaining = deadline - DateTimeOffset.UtcNow;
             if (repairWorlds.Length > 0 && remaining > TimeSpan.Zero)
             {
-                var retryDelay = remaining < FreshDetailRetryDelay ? remaining : FreshDetailRetryDelay;
+                var retryDelay = MarketFreshnessRetryPolicy.GetBackoff(
+                    targetedRepairPass,
+                    FreshDetailRetryDelay,
+                    remaining);
                 await Task.Delay(retryDelay, cancellationToken);
             }
         }
