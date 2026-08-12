@@ -42,4 +42,4 @@ jobs:
 
       - name: Run render-path boundary tests
         working-directory: ComplicatedMarketBoard
-        run: dotnet test tests/ComplicatedMarketBoard.Tests/ComplicatedMarketBoard.Tests.csproj -c Debug --filter FullyQualifiedName~RenderPathBoundaryTests
+        run: dotnet test tests/ComplicatedMarketBoard.RenderSafety.Tests/ComplicatedMarketBoard.RenderSafety.Tests.csproj -c Debug
