@@ -1,0 +1,46 @@
+name: Render safety
+
+on:
+  # This maintained fork integrates on master; upstream SimpleMarketBoard uses main.
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  render-safety:
+    runs-on: windows-latest
+    steps:
+      - name: Check out ComplicatedMarketBoard
+        uses: actions/checkout@v6
+        with:
+          path: ComplicatedMarketBoard
+
+      - name: Read the required Franthropy revision
+        id: franthropy
+        shell: pwsh
+        run: |
+          $revision = (Get-Content -LiteralPath 'ComplicatedMarketBoard/Franthropy.commit' -Raw).Trim()
+          if ($revision -notmatch '^[0-9a-f]{40}$') {
+            throw "Franthropy.commit must contain one full lowercase Git commit."
+          }
+          "revision=$revision" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Check out the pinned Franthropy revision
+        uses: actions/checkout@v6
+        with:
+          repository: FranFkntastic/Franthropy
+          ref: ${{ steps.franthropy.outputs.revision }}
+          path: Franthropy
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Run render-path boundary tests
+        working-directory: ComplicatedMarketBoard
+        run: dotnet test tests/ComplicatedMarketBoard.RenderSafety.Tests/ComplicatedMarketBoard.RenderSafety.Tests.csproj -c Debug

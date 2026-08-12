@@ -12,6 +12,7 @@ using ComplicatedMarketBoard.Market;
 using ComplicatedMarketBoard.Windows.Controls;
 using Miosuke.Extensions;
 using Franthropy.Dalamud.UI.Seasonal;
+using Franthropy.Dalamud.UI.Performance;
 
 
 namespace ComplicatedMarketBoard.Windows;
@@ -123,6 +124,7 @@ public class ConfigWindow : Window, IDisposable
         DrawUi(padding);
     }
 
+    [RenderFrameWorkJustification("Configuration enum pickers render only while this settings section is open.", 100)]
     private void DrawGeneral(float padding)
     {
         // setup
@@ -573,6 +575,7 @@ public class ConfigWindow : Window, IDisposable
     }
 
 
+    [RenderFrameWorkJustification("UI option enums and fixed five-column offset arrays are statically bounded.", 8)]
     private void DrawUi(float padding)
     {
         // setup
