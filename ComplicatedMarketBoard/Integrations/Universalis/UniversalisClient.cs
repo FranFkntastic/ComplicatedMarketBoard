@@ -396,6 +396,87 @@ public sealed class UniversalisClient
         var repairedPartitions = new Dictionary<string, UniversalisResponse>(StringComparer.OrdinalIgnoreCase);
         var verificationPass = 1;
         var targetedRepairPass = 0;
+        var usedScopeRepair = false;
+        if (MarketFreshnessRetryPolicy.ShouldUseScopeRepair(repairWorlds.Length, worldNames.Count))
+        {
+            usedScopeRepair = true;
+            var remaining = deadline - DateTimeOffset.UtcNow;
+            if (remaining <= TimeSpan.Zero)
+                return CreateStaleResponse(vocabulary, lastMatch.Detail);
+
+            var retryDelay = MarketFreshnessRetryPolicy.GetBackoff(
+                1,
+                FreshDetailRetryDelay,
+                remaining);
+            await Task.Delay(retryDelay, cancellationToken);
+            verificationPass++;
+            Service.Log.Info(
+                $"[Universalis] Retrying the complete {targetName} detail scope once because " +
+                $"{repairWorlds.Length}/{worldNames.Count} world partitions disagree with aggregate freshness.");
+            TraceFetch(
+                "detail-scope-repair-started",
+                targetName,
+                $"Retrying the complete detail scope once and refreshing probes for: {string.Join(", ", repairWorlds)}.",
+                verificationPass: verificationPass);
+
+            var scopeDetailTask = GetListingDataForTarget(
+                gameItem,
+                targetName,
+                cancellationToken,
+                reportProgress,
+                vocabulary,
+                verificationPass,
+                GetFreshDetailProgress(deadline - DateTimeOffset.UtcNow));
+            var refreshedProbeTasks = repairWorlds.Select(async worldName =>
+            {
+                var result = await GetFreshnessProbeForTarget(
+                    gameItem,
+                    worldName,
+                    cancellationToken,
+                    reportProgress: null,
+                    vocabulary,
+                    GetFreshDetailProgress(deadline - DateTimeOffset.UtcNow));
+                return (WorldName: worldName, result.Probe, result.Failure);
+            });
+            var refreshedProbes = await Task.WhenAll(refreshedProbeTasks);
+            detailed = await scopeDetailTask;
+            if (detailed.Status != UniversalisResponseStatus.Success)
+                return detailed;
+
+            foreach (var refreshed in refreshedProbes)
+            {
+                if (refreshed.Failure is not null)
+                    return refreshed.Failure;
+                if (refreshed.Probe is null)
+                {
+                    return new UniversalisResponse
+                    {
+                        Status = UniversalisResponseStatus.InvalidData,
+                        FailureDetail = $"Universalis returned no aggregate freshness data for {gameItem.Name} on {refreshed.WorldName}.",
+                    };
+                }
+
+                var probeIndex = Array.FindIndex(
+                    resolvedWorldProbes,
+                    probe => string.Equals(
+                        probe.TargetName,
+                        refreshed.WorldName,
+                        StringComparison.OrdinalIgnoreCase));
+                if (probeIndex >= 0)
+                    resolvedWorldProbes[probeIndex] = refreshed.Probe;
+            }
+
+            lastMatch = MarketFreshnessMatcher.CompareScope(
+                resolvedWorldProbes,
+                detailed,
+                P.Config.UniversalisHqOnly,
+                P.Config.UniversalisListings);
+            if (!lastMatch.IsCurrent)
+                return CreateStaleResponse(vocabulary, lastMatch.Detail);
+
+            repairWorlds = [];
+        }
+
         while (repairWorlds.Length > 0
                && targetedRepairPass < MarketFreshnessRetryPolicy.MaxTargetedRepairPasses
                && DateTimeOffset.UtcNow < deadline)
@@ -508,6 +589,7 @@ public sealed class UniversalisClient
 
         if (detailed.ListingPageMayBeTruncated
             && detailed.Listings.Count < P.Config.UniversalisListings
+            && repairedPartitions.Count > 0
             && originalRepairWorldListingCount > 0)
         {
             var refillLimit = Math.Min(
@@ -549,7 +631,9 @@ public sealed class UniversalisClient
         TraceFetch(
             "detail-verification-accepted",
             targetName,
-            $"Accepted after targeted repair of {string.Join(", ", repairedPartitions.Keys)}.",
+            usedScopeRepair
+                ? "Accepted after one complete-scope detail repair."
+                : $"Accepted after targeted repair of {string.Join(", ", repairedPartitions.Keys)}.",
             verificationPass: verificationPass);
         return MarketListingReconciler.FinalizeVerifiedResponse(
             detailed,
@@ -925,6 +1009,8 @@ public sealed class UniversalisClient
             1,
             UniversalisListingFetchPolicy.MaximumListingRequestLimit);
         var adaptivePass = 0;
+        int? previousUniqueListingCount = null;
+        UniversalisResponse? bestResponse = null;
         while (true)
         {
             adaptivePass++;
@@ -951,19 +1037,38 @@ public sealed class UniversalisClient
                 };
             }
 
+            if (bestResponse is null || response.Listings.Count >= bestResponse.Listings.Count)
+                bestResponse = response;
+
             var nextLimit = UniversalisListingFetchPolicy.GetNextRequestLimit(
                 desired,
                 requestLimit,
                 response.RawListingCount,
-                response.Listings.Count);
+                response.Listings.Count,
+                previousUniqueListingCount);
             if (nextLimit is null)
-                return response;
+            {
+                if (previousUniqueListingCount.HasValue
+                    && response.RawListingCount >= requestLimit
+                    && response.Listings.Count <= previousUniqueListingCount.Value)
+                {
+                    TraceFetch(
+                        "detail-adaptive-overfetch-stalled",
+                        targetName,
+                        $"Stopped listing expansion at {requestLimit} rows because the response produced " +
+                        $"{response.Listings.Count} unique identities after the prior pass produced {previousUniqueListingCount.Value}.",
+                        verificationPass: verificationPass + adaptivePass - 1);
+                }
+
+                return bestResponse;
+            }
 
             TraceFetch(
                 "detail-adaptive-overfetch",
                 targetName,
                 $"Expanded listing request from {requestLimit} to {nextLimit.Value} after {response.RawListingCount} rows produced {response.Listings.Count} unique identities.",
                 verificationPass: verificationPass + adaptivePass);
+            previousUniqueListingCount = response.Listings.Count;
             requestLimit = nextLimit.Value;
         }
     }

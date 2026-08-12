@@ -8,11 +8,14 @@ public static class UniversalisListingFetchPolicy
         int desiredUniqueListings,
         int currentRequestLimit,
         int rawListingCount,
-        int uniqueListingCount)
+        int uniqueListingCount,
+        int? previousUniqueListingCount = null)
     {
         if (desiredUniqueListings <= 0
             || uniqueListingCount >= desiredUniqueListings
             || rawListingCount < currentRequestLimit
+            || (previousUniqueListingCount.HasValue
+                && uniqueListingCount <= previousUniqueListingCount.Value)
             || currentRequestLimit >= MaximumListingRequestLimit)
         {
             return null;

@@ -3,6 +3,13 @@ namespace ComplicatedMarketBoard.Market;
 public static class MarketFreshnessRetryPolicy
 {
     public const int MaxTargetedRepairPasses = 4;
+    public const int MinimumScopeRepairWorlds = 4;
+    public const int AbsoluteScopeRepairWorldThreshold = 8;
+
+    public static bool ShouldUseScopeRepair(int aggregateAheadWorldCount, int scopeWorldCount)
+        => aggregateAheadWorldCount >= MinimumScopeRepairWorlds
+           && (aggregateAheadWorldCount >= AbsoluteScopeRepairWorldThreshold
+               || aggregateAheadWorldCount * 2 >= scopeWorldCount);
 
     public static bool HasRevisionChange(
         IEnumerable<MarketFreshnessGap> previous,
