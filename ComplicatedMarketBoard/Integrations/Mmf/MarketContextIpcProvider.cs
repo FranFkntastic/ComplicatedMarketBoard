@@ -4,6 +4,7 @@ using System.Threading;
 using ComplicatedMarketBoard.Integrations.Universalis;
 using ComplicatedMarketBoard.Market;
 using Dalamud.Plugin.Ipc;
+using Franthropy.Dalamud.UI.Performance;
 
 namespace ComplicatedMarketBoard.Integrations.Mmf;
 
@@ -21,11 +22,13 @@ public sealed record MarketContextResponse(
 public sealed class MarketContextIpcProvider : IDisposable
 {
     private static readonly TimeSpan CacheLifetime = TimeSpan.FromSeconds(60);
+    private const int MaximumCachedItems = 256;
     private const string GetMarketContextChannel = "ComplicatedMarketBoard.GetMarketContext";
     private const string GetMarketContextJsonChannel = "ComplicatedMarketBoard.GetMarketContext.v2";
     private const string MarketContextChangedChannel = "ComplicatedMarketBoard.MarketContextChanged";
 
-    private readonly ConcurrentDictionary<(uint ItemId, bool Hq), (DateTimeOffset CachedAt, MarketContextResponse? Response)> cache = new();
+    private readonly BoundedTtlCache<(uint ItemId, bool Hq), MarketContextResponse?> cache =
+        new(MaximumCachedItems, CacheLifetime);
     private readonly ConcurrentDictionary<(uint ItemId, bool Hq), byte> refreshes = new();
     private readonly CancellationTokenSource disposalCancellation = new();
     private readonly ICallGateProvider<uint, bool, MarketContextResponse?> provider;
@@ -58,11 +61,12 @@ public sealed class MarketContextIpcProvider : IDisposable
             return null;
 
         var key = (itemId, highQuality);
-        if (cache.TryGetValue(key, out var cached) && DateTimeOffset.UtcNow - cached.CachedAt < CacheLifetime)
-            return cached.Response;
+        var cached = cache.Get(key);
+        if (cached is { Found: true, IsFresh: true })
+            return cached.Value;
 
         QueueRefresh(key);
-        return cached.Response;
+        return cached.Found ? cached.Value : null;
     }
 
     private string? GetMarketContextJson(uint itemId, bool highQuality)
@@ -84,13 +88,13 @@ public sealed class MarketContextIpcProvider : IDisposable
         try
         {
             var response = await BuildContextAsync(key.ItemId, key.Hq, disposalCancellation.Token);
-            cache[key] = (DateTimeOffset.UtcNow, response);
+            cache.Set(key, response);
             PublishChanged(key);
         }
         catch (OperationCanceledException) when (disposalCancellation.IsCancellationRequested) { }
         catch (Exception exception)
         {
-            cache[key] = (DateTimeOffset.UtcNow, null);
+            cache.Set(key, null);
             Service.Log.Warning($"[CMB IPC] GetMarketContext refresh failed for {key.ItemId}: {exception.Message}");
             PublishChanged(key);
         }

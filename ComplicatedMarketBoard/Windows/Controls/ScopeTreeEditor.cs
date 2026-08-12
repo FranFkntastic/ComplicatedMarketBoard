@@ -2,11 +2,13 @@ using Dalamud.Interface;
 using ComplicatedMarketBoard.Assets;
 using ComplicatedMarketBoard.Market;
 using Miosuke.UiHelper;
+using Franthropy.Dalamud.UI.Performance;
 
 namespace ComplicatedMarketBoard.Windows.Controls;
 
 public static class ScopeTreeEditor
 {
+    [RenderFrameWorkJustification("Expanded hierarchical nodes are installation-bounded by the FFXIV world catalog.", 256)]
     public static void Draw(
         List<string> selectedScopes,
         string suffix,
@@ -71,6 +73,7 @@ public static class ScopeTreeEditor
         }
     }
 
+    [RenderFrameWorkJustification("Unknown entries render only in an explicit configuration editor for repair.", 256)]
     public static void DrawUnknownSavedEntries(List<string> selectedScopes, string suffix, Action onChanged)
     {
         var unknownScopes = P.MainWindow.ScopeCatalog.GetUnknownScopes(selectedScopes);

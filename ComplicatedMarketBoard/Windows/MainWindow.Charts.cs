@@ -20,6 +20,7 @@ public partial class MainWindow
 
     private bool chartsTabActive;
     private MarketChartSnapshot? chartSnapshot;
+    private long chartRevision;
 
     private void DrawChartsToggleButton()
     {
@@ -56,12 +57,12 @@ public partial class MainWindow
 
         if (chartSnapshot.Price is { } price)
         {
-            plotRenderer.Draw("PriceHistory", price, new Vector2(0, 0.55f * ImGui.GetContentRegionAvail().Y));
+            plotRenderer.Draw("PriceHistory", new(chartSnapshot.Revision), price, new Vector2(0, 0.55f * ImGui.GetContentRegionAvail().Y));
             ImGui.TextDisabled("Price per unit - NQ blue, HQ gold, rule = current cheapest");
         }
         if (chartSnapshot.Volume is { } volume)
         {
-            plotRenderer.Draw("VolumeHistory", volume, new Vector2(0, 0.5f * ImGui.GetContentRegionAvail().Y));
+            plotRenderer.Draw("VolumeHistory", new(chartSnapshot.Revision), volume, new Vector2(0, 0.5f * ImGui.GetContentRegionAvail().Y));
             ImGui.TextDisabled("Units moved per sale");
         }
     }
@@ -81,6 +82,7 @@ public partial class MainWindow
             xDomain = new(xDomain.Minimum, xDomain.Minimum + 1);
 
         chartSnapshot = new(
+            ++chartRevision,
             BuildPriceChart(ordered, xDomain),
             BuildVolumeChart(ordered, xDomain));
     }
@@ -144,5 +146,5 @@ public partial class MainWindow
             entry.Quantity,
             []);
 
-    private sealed record MarketChartSnapshot(PlotSpec? Price, PlotSpec? Volume);
+    private sealed record MarketChartSnapshot(long Revision, PlotSpec? Price, PlotSpec? Volume);
 }

@@ -5,6 +5,7 @@ using Dalamud.Game.Text;
 using Dalamud.Interface.Components;
 using Dalamud.Interface.ImGuiNotification;
 using Dalamud.Interface.Textures;
+using Dalamud.Plugin.Ipc;
 using Lumina.Excel.Sheets;
 using Lumina.Extensions;
 using Miosuke.UiHelper;
@@ -12,6 +13,8 @@ using ComplicatedMarketBoard.Integrations.Universalis;
 using ComplicatedMarketBoard.Assets;
 using ComplicatedMarketBoard.Market;
 using ComplicatedMarketBoard.Services;
+using Franthropy.Dalamud.UI.Performance;
+using Franthropy.Dalamud.UI.Tables;
 
 
 namespace ComplicatedMarketBoard.Windows;
@@ -26,6 +29,20 @@ public partial class MainWindow : Window, IDisposable
     private const float MinimumTableHeight = 60.0f;
     private const int MinimumRightPanelWidth = 80;
     private const int SearchResultLimit = 20;
+    private readonly DeferredCommit layoutPersistence = new(
+        TimeSpan.FromMilliseconds(300),
+        "Persist the final CMB layout after resize input becomes quiet.");
+    private readonly CadencedProbe<bool> mmfAvailability = new(
+        TimeSpan.FromSeconds(1),
+        "Refresh MarketMafioso availability without invoking IPC every frame.");
+    private readonly ICallGateSubscriber<bool> mmfAvailabilitySubscriber;
+    private readonly ICallGateSubscriber<uint, uint?, bool> mmfOpenSubscriber;
+    private readonly Func<bool> mmfAvailabilityProbe;
+    private readonly Action<MarketDataListing, int> listingRowRenderer;
+    private readonly Action<MarketDataEntry, int> historyRowRenderer;
+    private readonly Action<KeyValuePair<string, double>, int> freshnessRowRenderer;
+    private readonly Action<MarketItem, int> searchHistoryRowRenderer;
+    private static readonly Func<Exception, bool> MmfUnavailable = static _ => false;
     private static readonly List<ItemSearchResult> SearchableItems = Data.ItemSheet
         .Where(item => item.RowId > 0 && item.ItemSearchCategory.RowId != 0)
         .Select(item => new ItemSearchResult(item.RowId, item.Name.ToString()))
@@ -37,6 +54,15 @@ public partial class MainWindow : Window, IDisposable
         "ComplicatedMarketBoard",
         ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse)
     {
+        mmfAvailabilitySubscriber = Service.PluginInterface
+            .GetIpcSubscriber<bool>("MarketMafioso.IsRemoteMarketAvailable");
+        mmfOpenSubscriber = Service.PluginInterface
+            .GetIpcSubscriber<uint, uint?, bool>("MarketMafioso.OpenRemoteMarket");
+        mmfAvailabilityProbe = mmfAvailabilitySubscriber.InvokeFunc;
+        listingRowRenderer = DrawListingRow;
+        historyRowRenderer = DrawHistoryRow;
+        freshnessRowRenderer = DrawWorldFreshnessRow;
+        searchHistoryRowRenderer = DrawSearchHistoryRow;
         Size = new Vector2(350, 450);
         SizeCondition = ImGuiCond.FirstUseEver;
 
@@ -74,11 +100,13 @@ public partial class MainWindow : Window, IDisposable
 
     public override void OnClose()
     {
+        layoutPersistence.Flush(SaveConfig);
         P.MarketRefresh.SearchHistoryClean();
     }
 
     public void Dispose()
     {
+        layoutPersistence.Flush(SaveConfig);
     }
 
 
@@ -111,6 +139,7 @@ public partial class MainWindow : Window, IDisposable
     private bool historySortDescending = true;
     private IReadOnlyList<MarketDataListing> sortedListings = Array.Empty<MarketDataListing>();
     private IReadOnlyList<MarketDataEntry> sortedHistory = Array.Empty<MarketDataEntry>();
+    private IReadOnlyList<KeyValuePair<string, double>> worldFreshnessRows = Array.Empty<KeyValuePair<string, double>>();
     private string cachedMarketFreshnessTooltip = "No freshness data was returned for this item.";
 
     public int LoadingQueue = 0;
@@ -196,6 +225,7 @@ public partial class MainWindow : Window, IDisposable
 
     public override void Draw()
     {
+        layoutPersistence.TryCommit(SaveConfig);
         // -------------------------------- [  ui settings  ] --------------------------------
         // global
         var spacing = ImGui.GetStyle().ItemSpacing;
@@ -262,12 +292,17 @@ public partial class MainWindow : Window, IDisposable
 
         ImGui.EndChild();
         ImGui.SameLine(0, 0);
-        DrawVerticalResizeHandle("main right panel width", ImGui.GetContentRegionAvail().Y, deltaX =>
+        var rightPanelDelta = DrawVerticalResizeHandle("main right panel width", ImGui.GetContentRegionAvail().Y);
+        if (Math.Abs(rightPanelDelta) > 0.01f)
         {
             var maxRightPanelWidth = Math.Max(MinimumRightPanelWidth, (int)(ImGui.GetWindowWidth() - MinimumTableHeight - ResizeHandleWidth - spacing.X));
-            P.Config.rightColWidth = Math.Clamp(P.Config.rightColWidth - (int)Math.Round(deltaX), MinimumRightPanelWidth, maxRightPanelWidth);
-            P.Config.Save();
-        });
+            var width = Math.Clamp(P.Config.rightColWidth - (int)Math.Round(rightPanelDelta), MinimumRightPanelWidth, maxRightPanelWidth);
+            if (width != P.Config.rightColWidth)
+            {
+                P.Config.rightColWidth = width;
+                layoutPersistence.MarkChanged();
+            }
+        }
         ImGui.SameLine();
 
 
@@ -326,16 +361,21 @@ public partial class MainWindow : Window, IDisposable
 
         ImGui.Separator();
 
-        DrawHorizontalResizeHandle("world freshness height", deltaY =>
+        var freshnessDelta = DrawHorizontalResizeHandle("world freshness height");
+        if (Math.Abs(freshnessDelta) > 0.01f)
         {
             var maxWorldUpdateHeight = Math.Max(MinimumTableHeight, rightPaneHeight - MinimumTableHeight - ImGui.GetTextLineHeightWithSpacing() - ResizeHandleHeight - 2f * spacing.Y);
-            P.Config.WorldUpdateTableHeight = Math.Clamp(P.Config.WorldUpdateTableHeight - deltaY, MinimumTableHeight, maxWorldUpdateHeight);
-            P.Config.Save();
-        });
+            var height = Math.Clamp(P.Config.WorldUpdateTableHeight - freshnessDelta, MinimumTableHeight, maxWorldUpdateHeight);
+            if (Math.Abs(height - P.Config.WorldUpdateTableHeight) > 0.01f)
+            {
+                P.Config.WorldUpdateTableHeight = height;
+                layoutPersistence.MarkChanged();
+            }
+        }
 
         // -------------------------------- [  world outdated  ] --------------------------------
         ImGui.BeginChild("col_right world_outdated", new Vector2(rightColTableWidth - spacing.X, P.Config.WorldUpdateTableHeight), false, ImGuiWindowFlags.HorizontalScrollbar);
-        DrawWorldOutdated(spacing, rightColTableWidth);
+        DrawWorldOutdated();
         ImGui.EndChild();
 
 
@@ -593,6 +633,7 @@ public partial class MainWindow : Window, IDisposable
         ImGui.PopFont();
     }
 
+    [RenderFrameWorkJustification("The popup is user-open only and its FFXIV scope catalog is installation-bounded.", 256)]
     private void DrawWorldCombo(float width)
     {
         if (P.PluginThemeEnabled)
@@ -742,6 +783,7 @@ public partial class MainWindow : Window, IDisposable
         _ => "",
     };
 
+    [RenderFrameWorkJustification("Search projection is hard-capped by SearchResultLimit before rendering.", 20)]
     private void DrawItemSearchBar(Vector2 spacing)
     {
         ImGui.SetCursorPosX(0);
@@ -852,14 +894,19 @@ public partial class MainWindow : Window, IDisposable
         var historyHeight = Math.Max(MinimumTableHeight, availableHeight - listingHeight - ResizeHandleHeight - gap);
 
         DrawCurrentListingTable(listingHeight);
-        DrawHorizontalResizeHandle("listing history split", deltaY =>
+        var splitDelta = DrawHorizontalResizeHandle("listing history split");
+        if (Math.Abs(splitDelta) > 0.01f)
         {
             var baseHeight = availableHeight / 2;
             var minOffset = MinimumTableHeight - baseHeight;
             var maxOffset = availableHeight - MinimumTableHeight - ResizeHandleHeight - gap - baseHeight;
-            P.Config.soldTableOffset = (int)Math.Round(Math.Clamp(P.Config.soldTableOffset + deltaY, minOffset, maxOffset));
-            P.Config.Save();
-        });
+            var offset = (int)Math.Round(Math.Clamp(P.Config.soldTableOffset + splitDelta, minOffset, maxOffset));
+            if (offset != P.Config.soldTableOffset)
+            {
+                P.Config.soldTableOffset = offset;
+                layoutPersistence.MarkChanged();
+            }
+        }
 
         if (gap > 0)
         {
@@ -869,7 +916,7 @@ public partial class MainWindow : Window, IDisposable
         DrawHistoryEntryTable(historyHeight);
     }
 
-    private static void DrawHorizontalResizeHandle(string id, Action<float> onDrag)
+    private static float DrawHorizontalResizeHandle(string id)
     {
         ImGui.PushStyleColor(ImGuiCol.Button, Vector4.Zero);
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Ui.ColourCyan);
@@ -877,13 +924,10 @@ public partial class MainWindow : Window, IDisposable
         ImGui.Button($"###{id}", new Vector2(ImGui.GetContentRegionAvail().X, ResizeHandleHeight));
         ImGui.PopStyleColor(3);
 
-        if (ImGui.IsItemActive())
-        {
-            onDrag(ImGui.GetIO().MouseDelta.Y);
-        }
+        return ImGui.IsItemActive() ? ImGui.GetIO().MouseDelta.Y : 0f;
     }
 
-    private static void DrawVerticalResizeHandle(string id, float height, Action<float> onDrag)
+    private static float DrawVerticalResizeHandle(string id, float height)
     {
         ImGui.PushStyleColor(ImGuiCol.Button, Vector4.Zero);
         ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Ui.ColourCyan);
@@ -891,13 +935,11 @@ public partial class MainWindow : Window, IDisposable
         ImGui.Button($"###{id}", new Vector2(ResizeHandleWidth, height));
         ImGui.PopStyleColor(3);
 
-        if (ImGui.IsItemActive())
-        {
-            onDrag(ImGui.GetIO().MouseDelta.X);
-        }
+        return ImGui.IsItemActive() ? ImGui.GetIO().MouseDelta.X : 0f;
     }
 
-    private static void SyncColumnWidthOffsets(float[] baseWidths, float[] offsets)
+    [RenderFrameWorkJustification("Visible CMB tables have at most five ImGui columns to synchronize.", 5)]
+    private void SyncColumnWidthOffsets(float[] baseWidths, float[] offsets)
     {
         var changed = false;
         for (var i = 0; i < baseWidths.Length; i++)
@@ -911,9 +953,7 @@ public partial class MainWindow : Window, IDisposable
         }
 
         if (changed)
-        {
-            P.Config.Save();
-        }
+            layoutPersistence.MarkChanged();
     }
 
     private static float[] EnsureColumnWidthOffsets(float[] offsets, int count)
@@ -1072,6 +1112,7 @@ public partial class MainWindow : Window, IDisposable
         };
 
         sortedHistory = entries.ToArray();
+        worldFreshnessRows = CurrentItem.WorldOutOfDate.ToArray();
         cachedMarketFreshnessTooltip = BuildMarketFreshnessTooltip();
         RebuildChartSnapshot();
     }
@@ -1094,77 +1135,7 @@ public partial class MainWindow : Window, IDisposable
 
             DrawListingHeaderRow();
 
-            var marketDataListings = sortedListings;
-
-            bool isColourPushed;
-            for (var index = 0; index < marketDataListings.Count; index++)
-            {
-                var listing = marketDataListings[index];
-                isColourPushed = false;
-                if (P.Config.MarkHigherThanVendor && CurrentItem.VendorSelling > 0 && listing.PricePerUnit >= CurrentItem.VendorSelling)
-                {
-                    ImGui.PushStyleColor(ImGuiCol.Text, Ui.ColourCrimson);
-                    isColourPushed = true;
-                }
-                else if (listing.Hq)
-                {
-                    ImGui.PushStyleColor(ImGuiCol.Text, Ui.ColourHq);
-                    isColourPushed = true;
-                }
-
-                ImGui.TableNextRow();
-                ImGui.TableNextColumn();
-
-                // Selling
-                var selling = $"{listing.PricePerUnit}";
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
-                if (P.Config.NumbersAlignRight)
-                {
-                    ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.NumbersAlignRightOffset);
-                    Ui.AlignRight(selling);
-                }
-                if (ImGui.Selectable($"{selling}##listing{index}", selectedListing == index, ImGuiSelectableFlags.SpanAllColumns))
-                {
-                    selectedListing = index;
-                }
-                ImGui.TableNextColumn();
-
-                // Q
-                var quantity = $"{listing.Quantity:##,###}";
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
-                if (P.Config.NumbersAlignRight)
-                {
-                    ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.NumbersAlignRightOffset);
-                    Ui.AlignRight(quantity);
-                }
-                ImGui.Text(quantity);
-                ImGui.TableNextColumn();
-
-                // Total
-                var totalPrice = GetListingTotal(listing);
-                var total = totalPrice.ToString("N0", CultureInfo.CurrentCulture);
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
-                if (P.Config.NumbersAlignRight)
-                {
-                    ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.NumbersAlignRightOffset);
-                    Ui.AlignRight(total);
-                }
-                ImGui.Text(total);
-                ImGui.TableNextColumn();
-
-                if (isColourPushed) ImGui.PopStyleColor();
-
-                // World
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
-                var listingWorld = GetListingWorld(listing);
-                ImGui.Text(listingWorld);
-                DrawWorldTravelContextMenu(listingWorld, $"listing-{index}");
-                ImGui.TableNextColumn();
-
-                // Retainer
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
-                ImGui.Text(GetListingRetainer(listing));
-            }
+            DalamudVirtualizedRows.Draw(sortedListings, listingRowRenderer);
 
             SyncColumnWidthOffsets(ListingColumnBaseWidths, P.Config.sellingColWidthOffset);
             ImGui.EndTable();
@@ -1172,6 +1143,72 @@ public partial class MainWindow : Window, IDisposable
 
         // === item price table 1 ===
         ImGui.EndChild();
+    }
+
+    private void DrawListingRow(MarketDataListing listing, int index)
+    {
+        var isColourPushed = false;
+        if (P.Config.MarkHigherThanVendor && CurrentItem.VendorSelling > 0 && listing.PricePerUnit >= CurrentItem.VendorSelling)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, Ui.ColourCrimson);
+            isColourPushed = true;
+        }
+        else if (listing.Hq)
+        {
+            ImGui.PushStyleColor(ImGuiCol.Text, Ui.ColourHq);
+            isColourPushed = true;
+        }
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+
+        // Selling
+        var selling = $"{listing.PricePerUnit}";
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
+        if (P.Config.NumbersAlignRight)
+        {
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.NumbersAlignRightOffset);
+            Ui.AlignRight(selling);
+        }
+        if (ImGui.Selectable($"{selling}##listing{index}", selectedListing == index, ImGuiSelectableFlags.SpanAllColumns))
+            selectedListing = index;
+        ImGui.TableNextColumn();
+
+        // Q
+        var quantity = $"{listing.Quantity:##,###}";
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
+        if (P.Config.NumbersAlignRight)
+        {
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.NumbersAlignRightOffset);
+            Ui.AlignRight(quantity);
+        }
+        ImGui.Text(quantity);
+        ImGui.TableNextColumn();
+
+        // Total
+        var totalPrice = GetListingTotal(listing);
+        var total = totalPrice.ToString("N0", CultureInfo.CurrentCulture);
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
+        if (P.Config.NumbersAlignRight)
+        {
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.NumbersAlignRightOffset);
+            Ui.AlignRight(total);
+        }
+        ImGui.Text(total);
+        ImGui.TableNextColumn();
+
+        if (isColourPushed) ImGui.PopStyleColor();
+
+        // World
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
+        var listingWorld = GetListingWorld(listing);
+        ImGui.Text(listingWorld);
+        DrawWorldTravelContextMenu(listingWorld, $"listing-{index}");
+        ImGui.TableNextColumn();
+
+        // Retainer
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
+        ImGui.Text(GetListingRetainer(listing));
     }
 
     private void DrawHistoryEntryTable(float height)
@@ -1193,57 +1230,7 @@ public partial class MainWindow : Window, IDisposable
 
             DrawHistoryHeaderRow();
 
-            var marketDataEntries = sortedHistory;
-
-            for (var index = 0; index < marketDataEntries.Count; index++)
-            {
-                var entry = marketDataEntries[index];
-                if (entry.Hq) ImGui.PushStyleColor(ImGuiCol.Text, Ui.ColourHq);
-
-                ImGui.TableNextRow();
-                ImGui.TableNextColumn();
-
-                // Sold
-                var sold = $"{entry.PricePerUnit}";
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
-                if (P.Config.NumbersAlignRight)
-                {
-                    ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.NumbersAlignRightOffset);
-                    Ui.AlignRight(sold);
-                }
-                if (ImGui.Selectable($"{entry.PricePerUnit}##history{index}", selectedHistory == index, ImGuiSelectableFlags.SpanAllColumns))
-                {
-                    selectedHistory = index;
-                }
-                ImGui.TableNextColumn();
-
-                // Q
-                var quantity = $"{entry.Quantity:##,###}";
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
-                if (P.Config.NumbersAlignRight)
-                {
-                    ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.NumbersAlignRightOffset);
-                    Ui.AlignRight(quantity);
-                }
-                ImGui.Text(quantity);
-                ImGui.TableNextColumn();
-
-                // Date
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
-                ImGui.Text($"{DateTimeOffset.FromUnixTimeSeconds(entry.Timestamp).LocalDateTime:MM-dd HH:mm}");
-                ImGui.TableNextColumn();
-
-                // World
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
-                ImGui.Text(GetHistoryWorld(entry));
-                ImGui.TableNextColumn();
-
-                // Buyer
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
-                ImGui.Text(GetHistoryBuyer(entry));
-
-                if (entry.Hq) ImGui.PopStyleColor();
-            }
+            DalamudVirtualizedRows.Draw(sortedHistory, historyRowRenderer);
 
             SyncColumnWidthOffsets(HistoryColumnBaseWidths, P.Config.soldColWidthOffset);
             ImGui.EndTable();
@@ -1251,6 +1238,53 @@ public partial class MainWindow : Window, IDisposable
 
         // === item price table 2 ===
         ImGui.EndChild();
+    }
+
+    private void DrawHistoryRow(MarketDataEntry entry, int index)
+    {
+        if (entry.Hq) ImGui.PushStyleColor(ImGuiCol.Text, Ui.ColourHq);
+
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+
+        // Sold
+        var sold = $"{entry.PricePerUnit}";
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
+        if (P.Config.NumbersAlignRight)
+        {
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.NumbersAlignRightOffset);
+            Ui.AlignRight(sold);
+        }
+        if (ImGui.Selectable($"{entry.PricePerUnit}##history{index}", selectedHistory == index, ImGuiSelectableFlags.SpanAllColumns))
+            selectedHistory = index;
+        ImGui.TableNextColumn();
+
+        // Q
+        var quantity = $"{entry.Quantity:##,###}";
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
+        if (P.Config.NumbersAlignRight)
+        {
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.NumbersAlignRightOffset);
+            Ui.AlignRight(quantity);
+        }
+        ImGui.Text(quantity);
+        ImGui.TableNextColumn();
+
+        // Date
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
+        ImGui.Text($"{DateTimeOffset.FromUnixTimeSeconds(entry.Timestamp).LocalDateTime:MM-dd HH:mm}");
+        ImGui.TableNextColumn();
+
+        // World
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
+        ImGui.Text(GetHistoryWorld(entry));
+        ImGui.TableNextColumn();
+
+        // Buyer
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
+        ImGui.Text(GetHistoryBuyer(entry));
+
+        if (entry.Hq) ImGui.PopStyleColor();
     }
 
     private void DrawHistoryButton()
@@ -1296,17 +1330,9 @@ public partial class MainWindow : Window, IDisposable
 
     private void DrawMmfBuyButton()
     {
-        var available = false;
-        try
-        {
-            available = Service.PluginInterface
-                .GetIpcSubscriber<bool>("MarketMafioso.IsRemoteMarketAvailable")
-                .InvokeFunc();
-        }
-        catch
-        {
-            available = false;
-        }
+        var available = mmfAvailability.Read(
+            mmfAvailabilityProbe,
+            MmfUnavailable).Value;
         if (!available)
             return;
 
@@ -1315,9 +1341,7 @@ public partial class MainWindow : Window, IDisposable
         {
             try
             {
-                var accepted = Service.PluginInterface
-                    .GetIpcSubscriber<uint, uint?, bool>("MarketMafioso.OpenRemoteMarket")
-                    .InvokeFunc((uint)CurrentItem.Id, null);
+                var accepted = mmfOpenSubscriber.InvokeFunc((uint)CurrentItem.Id, null);
                 mmfBuyNote = accepted ? null : "MarketMafioso could not open the remote market for this item.";
             }
             catch
@@ -1330,7 +1354,7 @@ public partial class MainWindow : Window, IDisposable
             ImGui.SetTooltip(mmfBuyNote ?? "Open this item in MarketMafioso Remote Market to buy it here.");
     }
 
-    private void DrawWorldOutdated(Vector2 spacing, float rightColTableWidth)
+    private void DrawWorldOutdated()
     {
         if (ImGui.BeginTable(
             "col_right world_outdated table",
@@ -1348,27 +1372,27 @@ public partial class MainWindow : Window, IDisposable
             ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.WorldUpdateColPaddingOffset[1]);
             ImGui.TextColored(Ui.ColourCyan, "World");
 
-            foreach (var i in CurrentItem.WorldOutOfDate)
-            {
-                ImGui.TableNextRow();
-                ImGui.TableNextColumn();
-
-                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.WorldUpdateColPaddingOffset[0]);
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 0.5f * spacing.Y);
-
-                Ui.AlignRight($"{i.Value:F2}");
-                ImGui.Text($"{i.Value:F2}");
-                ImGui.TableNextColumn();
-
-                ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 0.5f * spacing.Y);
-                ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.WorldUpdateColPaddingOffset[1]);
-                ImGui.Text($"{i.Key}");
-                DrawWorldTravelContextMenu(i.Key, $"freshness-{i.Key}");
-            }
+            DalamudVirtualizedRows.Draw(worldFreshnessRows, freshnessRowRenderer);
 
             SyncColumnWidthOffsets(WorldUpdateColumnBaseWidths, P.Config.WorldUpdateColWidthOffset);
             ImGui.EndTable();
         }
+    }
+
+    private void DrawWorldFreshnessRow(KeyValuePair<string, double> freshness, int _)
+    {
+        var spacing = ImGui.GetStyle().ItemSpacing;
+        ImGui.TableNextRow();
+        ImGui.TableNextColumn();
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.WorldUpdateColPaddingOffset[0]);
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 0.5f * spacing.Y);
+        Ui.AlignRight($"{freshness.Value:F2}");
+        ImGui.Text($"{freshness.Value:F2}");
+        ImGui.TableNextColumn();
+        ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 0.5f * spacing.Y);
+        ImGui.SetCursorPosX(ImGui.GetCursorPosX() + P.Config.WorldUpdateColPaddingOffset[1]);
+        ImGui.Text(freshness.Key);
+        DrawWorldTravelContextMenu(freshness.Key, $"freshness-{freshness.Key}");
     }
 
     private void DrawVelocity()
@@ -1384,14 +1408,14 @@ public partial class MainWindow : Window, IDisposable
     private void DrawSearchHistory()
     {
         if (searchHistoryOpen)
-        {
-            foreach (var item in P.MarketRefresh.GameItemCacheList)
-            {
-                if (ImGui.Selectable($"{item.Name}", (uint)CurrentItem.Id == item.Id))
-                {
-                    P.MarketRefresh.DoCheckAsync(item.Id);
-                }
-            }
-        }
+            DalamudVirtualizedRows.Draw(P.MarketRefresh.GameItemCacheList, searchHistoryRowRenderer);
     }
+
+    private void DrawSearchHistoryRow(MarketItem item, int _)
+    {
+        if (ImGui.Selectable(item.Name, (uint)CurrentItem.Id == item.Id))
+            P.MarketRefresh.DoCheckAsync(item.Id);
+    }
+
+    private static void SaveConfig() => P.Config.Save();
 }

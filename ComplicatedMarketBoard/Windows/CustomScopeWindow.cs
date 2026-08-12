@@ -4,6 +4,7 @@ using ComplicatedMarketBoard.Assets;
 using ComplicatedMarketBoard.Market;
 using ComplicatedMarketBoard.Windows.Controls;
 using Miosuke.UiHelper;
+using Franthropy.Dalamud.UI.Performance;
 
 namespace ComplicatedMarketBoard.Windows;
 
@@ -67,6 +68,7 @@ public class CustomScopeWindow : Window, IDisposable
         P.Config.Save();
     }
 
+    [RenderFrameWorkJustification("Editable scope rows have variable tree height and render only in the explicit scope editor.", 100)]
     public override void Draw()
     {
         var suffix = $"###{Name}";
