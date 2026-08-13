@@ -1,10 +1,10 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
-    [ValidateSet('Status', 'Claim', 'Deploy', 'Release')]
+    [ValidateSet('Status', 'Claim', 'Stage', 'Deploy', 'Release')]
     [string]$Action,
 
-    [ValidateSet('Primary', 'Secondary', 'Quaternary')]
+    [ValidateSet('Primary', 'Secondary', 'Tertiary', 'Quaternary')]
     [string]$Profile = 'Primary',
 
     [string]$Owner,
@@ -12,6 +12,10 @@ param(
     [string]$ExpectedCommit,
 
     [string]$DabPath,
+
+    [string]$FranthropyPath,
+
+    [switch]$AllowExperimentalBranch,
 
     [ValidateRange(1, 120)]
     [int]$TimeoutSeconds = 30
@@ -28,6 +32,7 @@ $profileKey = $Profile.ToLowerInvariant()
 $profileDirectoryName = switch ($Profile) {
     'Primary' { 'XIVLauncher' }
     'Secondary' { 'XIVLauncher-Multibox-2' }
+    'Tertiary' { 'XIVLauncher-Multibox-3' }
     'Quaternary' { 'XIVLauncher-Multibox-4' }
 }
 $dabProfile = if ($Profile -eq 'Primary') { 'primary' } else { $profileDirectoryName }
@@ -190,7 +195,8 @@ function Restore-DirectoryBackup {
 }
 
 if ($Action -eq 'Status') {
-    $entry = Get-CmbCatalogEntry (Resolve-DabPath)
+    $entry = $null
+    try { $entry = Get-CmbCatalogEntry (Resolve-DabPath) } catch { }
     Write-Receipt @{
         action = 'Status'
         profile = $Profile
@@ -238,20 +244,34 @@ $branch = Get-RepositoryValue @('branch', '--show-current')
 $commit = Get-RepositoryValue @('rev-parse', 'HEAD')
 $originCommit = Get-RepositoryValue @('rev-parse', 'origin/master')
 $dirty = Get-RepositoryValue @('status', '--porcelain=v1', '--untracked-files=all')
-if ($branch -ne 'master') {
-    throw "CMB deployment requires branch 'master'; current branch is '$branch'."
-}
 if (-not [string]::IsNullOrWhiteSpace($dirty)) {
     throw "CMB deployment requires a clean worktree."
 }
-if ($commit -ne $originCommit) {
-    throw "CMB master '$commit' does not match origin/master '$originCommit'."
-}
-if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and -not $commit.StartsWith($ExpectedCommit, [StringComparison]::OrdinalIgnoreCase)) {
-    throw "CMB master '$commit' does not match expected commit '$ExpectedCommit'."
+if ($AllowExperimentalBranch) {
+    if ([string]::IsNullOrWhiteSpace($ExpectedCommit) -or -not $commit.StartsWith($ExpectedCommit, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Experimental CMB deployment requires -ExpectedCommit matching '$commit'."
+    }
+    $publishedRefs = Get-RepositoryValue @('branch', '-r', '--contains', $commit)
+    if ([string]::IsNullOrWhiteSpace($publishedRefs)) {
+        throw "Experimental CMB commit '$commit' is not published on an origin branch."
+    }
+} else {
+    if ($branch -ne 'master') {
+        throw "CMB deployment requires branch 'master'; current branch is '$branch'."
+    }
+    if ($commit -ne $originCommit) {
+        throw "CMB master '$commit' does not match origin/master '$originCommit'."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and -not $commit.StartsWith($ExpectedCommit, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "CMB master '$commit' does not match expected commit '$ExpectedCommit'."
+    }
 }
 
-$franthropy = Join-Path $workspace 'Franthropy'
+$franthropy = if ([string]::IsNullOrWhiteSpace($FranthropyPath)) {
+    Join-Path $workspace 'Franthropy'
+} else {
+    [System.IO.Path]::GetFullPath($FranthropyPath)
+}
 $requiredFranthropyCommit = if (Test-Path -LiteralPath $franthropyCommitPath -PathType Leaf) {
     (Get-Content -LiteralPath $franthropyCommitPath -Raw).Trim()
 }
@@ -265,13 +285,62 @@ $franthropyDirty = (& git -C $franthropy status --porcelain=v1 --untracked-files
 if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace($franthropyDirty)) {
     throw "Franthropy must be a clean sibling checkout before CMB deployment."
 }
-& git -C $franthropy merge-base --is-ancestor HEAD origin/main
-if ($LASTEXITCODE -ne 0) {
-    throw "Franthropy HEAD is not published on origin/main."
+if ($AllowExperimentalBranch) {
+    $franthropyHead = (& git -C $franthropy rev-parse HEAD).Trim()
+    if ($LASTEXITCODE -ne 0 -or $franthropyHead -ne $requiredFranthropyCommit) {
+        throw "Experimental Franthropy checkout must equal CMB's required revision '$requiredFranthropyCommit'."
+    }
+    $publishedFranthropyRefs = (& git -C $franthropy branch -r --contains $requiredFranthropyCommit | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($publishedFranthropyRefs)) {
+        throw "Experimental Franthropy revision '$requiredFranthropyCommit' is not published on an origin branch."
+    }
+} else {
+    & git -C $franthropy merge-base --is-ancestor HEAD origin/main
+    if ($LASTEXITCODE -ne 0) {
+        throw "Franthropy HEAD is not published on origin/main."
+    }
+    & git -C $franthropy merge-base --is-ancestor $requiredFranthropyCommit HEAD
+    if ($LASTEXITCODE -ne 0) {
+        throw "Franthropy HEAD does not contain CMB's required revision '$requiredFranthropyCommit'."
+    }
 }
-& git -C $franthropy merge-base --is-ancestor $requiredFranthropyCommit HEAD
-if ($LASTEXITCODE -ne 0) {
-    throw "Franthropy HEAD does not contain CMB's required revision '$requiredFranthropyCommit'."
+
+if ($Action -eq 'Stage') {
+    $stageRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cmb-stage-$([Guid]::NewGuid().ToString('N'))"
+    $stageOutput = Join-Path $stageRoot 'output'
+    $stageTarget = Join-Path $profileRoot 'devPlugins\ComplicatedMarketBoard'
+    try {
+        $stageArguments = @(
+            'build', $project, '-c', 'Debug', '--no-restore', '--no-incremental',
+            "-p:OutputPath=$stageOutput",
+            "-p:FranthropyDalamudProject=$(Join-Path $franthropy 'src\Franthropy.Dalamud\Franthropy.Dalamud.csproj')"
+        )
+        & dotnet @stageArguments
+        if ($LASTEXITCODE -ne 0) { throw "CMB Debug staging build failed with exit code $LASTEXITCODE." }
+        $stageDll = Join-Path $stageOutput 'ComplicatedMarketBoard.dll'
+        $stageManifest = Join-Path $stageOutput 'ComplicatedMarketBoard.json'
+        if (-not (Test-Path -LiteralPath $stageDll) -or -not (Test-Path -LiteralPath $stageManifest)) {
+            throw 'CMB staging output is incomplete.'
+        }
+        $stageHash = (Get-FileHash -LiteralPath $stageDll -Algorithm SHA256).Hash
+        Copy-DirectoryFiles -Source $stageOutput -Destination $stageTarget -MainDllName 'ComplicatedMarketBoard.dll'
+        $installedDll = Join-Path $stageTarget 'ComplicatedMarketBoard.dll'
+        $installedHash = (Get-FileHash -LiteralPath $installedDll -Algorithm SHA256).Hash
+        if ($installedHash -ne $stageHash) { throw 'CMB staged target hash does not match the build.' }
+        Write-Receipt @{
+            action = 'Stage'
+            profile = $Profile
+            branch = $branch
+            commit = $commit
+            franthropyCommit = $requiredFranthropyCommit
+            targetDll = $installedDll
+            dllSha256 = $installedHash
+        }
+    }
+    finally {
+        Remove-TemporaryBuildRoot $stageRoot
+    }
+    exit 0
 }
 
 $registeredDll = Get-RegisteredDllPath
@@ -298,7 +367,10 @@ if ($Profile -ne 'Primary') {
     $buildDirectory = Join-Path $temporaryBuildRoot 'output'
 }
 
-$buildArguments = @('build', $project, '-c', 'Debug', '--no-restore', '--no-incremental')
+$buildArguments = @(
+    'build', $project, '-c', 'Debug', '--no-restore', '--no-incremental',
+    "-p:FranthropyDalamudProject=$(Join-Path $franthropy 'src\Franthropy.Dalamud\Franthropy.Dalamud.csproj')"
+)
 if ($Profile -ne 'Primary') {
     $buildArguments += "-p:OutputPath=$buildDirectory"
 }
