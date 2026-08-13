@@ -1,40 +1,75 @@
 using System.Globalization;
 using ComplicatedMarketBoard.Integrations.Universalis;
+using Franthropy.Dalamud.UI.Styling;
 using Miosuke.UiHelper;
 
 namespace ComplicatedMarketBoard.Windows;
 
 public partial class MainWindow
 {
+    private static readonly DalamudUiTheme MarketStatusTheme =
+        DalamudUiTheme.Dark(Ui.ColourCyan) with
+        {
+            Palette = DalamudUiPalette.Dark(Ui.ColourCyan) with
+            {
+                Error = Ui.ColourCrimson,
+                Text = Ui.ColourWhite3,
+            },
+        };
+
     private void DrawMarketDataStatusBar(Vector2 spacing)
     {
         if (CurrentItem.Id == 0)
             return;
 
         ImGui.Spacing();
-        ImGui.BeginChild(
+        var tone = GetMarketRefreshStatusTone();
+        var statusHeight = Math.Max(
+            ImGui.GetFrameHeight() + spacing.Y,
+            ImGui.GetFrameHeight() + (MarketStatusTheme.Metrics.WindowPadding.Y * 2f));
+        DalamudUiChrome.DrawStatusBand(
             "market data refresh status",
-            new Vector2(0, ImGui.GetTextLineHeightWithSpacing() + spacing.Y),
-            true,
-            ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
-        ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 0.2f * spacing.Y);
+            MarketStatusTheme.Palette,
+            tone,
+            () =>
+            {
+                if (RefreshInProgress)
+                {
+                    var elapsed = FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - RefreshStartedAt);
+                    ImGui.ProgressBar(
+                        RefreshProgress,
+                        new Vector2(-1, ImGui.GetFrameHeight()),
+                        $"{RefreshStatusText}... {elapsed}");
+                    return;
+                }
 
-        if (RefreshInProgress)
-        {
-            var elapsed = FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - RefreshStartedAt);
-            ImGui.ProgressBar(
-                RefreshProgress,
-                new Vector2(-1, ImGui.GetTextLineHeightWithSpacing()),
-                $"{RefreshStatusText}... {elapsed}");
-        }
-        else
-        {
-            ImGui.TextColored(GetMarketRefreshStatusColour(), GetMarketRefreshStatusText());
-        }
+                DalamudUiChrome.DrawBadge(GetMarketRefreshStatusLabel(), MarketStatusTheme.Palette, tone);
+                ImGui.SameLine();
+                ImGui.AlignTextToFramePadding();
+                ImGui.TextColored(GetMarketRefreshStatusColour(), GetMarketRefreshStatusText());
+            },
+            statusHeight);
 
         if (ImGui.IsItemHovered())
             ImGui.SetTooltip(GetMarketDataStatusTooltip());
-        ImGui.EndChild();
+    }
+
+    private DalamudUiTone GetMarketRefreshStatusTone()
+    {
+        if (!string.IsNullOrWhiteSpace(RefreshErrorText) ||
+            CurrentItem.UniversalisResponse.Status != UniversalisResponseStatus.Success)
+            return DalamudUiTone.Error;
+        return CurrentItem.UniversalisResponse.FetchTime == 0
+            ? DalamudUiTone.Neutral
+            : DalamudUiTone.Accent;
+    }
+
+    private string GetMarketRefreshStatusLabel()
+    {
+        if (!string.IsNullOrWhiteSpace(RefreshErrorText) ||
+            CurrentItem.UniversalisResponse.Status != UniversalisResponseStatus.Success)
+            return "ERROR";
+        return CurrentItem.UniversalisResponse.FetchTime == 0 ? "IDLE" : "READY";
     }
 
     private Vector4 GetMarketRefreshStatusColour()
