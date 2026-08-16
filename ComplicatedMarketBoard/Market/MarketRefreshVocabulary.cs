@@ -80,6 +80,18 @@ public sealed class MarketRefreshVocabulary
             ? $"Latest listings made the nice list for {itemName}"
             : $"Latest listings confirmed for {itemName}";
 
+    public string PartiallyConfirmed(
+        string itemName,
+        IReadOnlyCollection<string> deferredWorlds)
+    {
+        var worldSummary = deferredWorlds.Count <= 3
+            ? string.Join(", ", deferredWorlds)
+            : $"{deferredWorlds.Count} worlds";
+        return Festive
+            ? $"Latest listings made the nice list for {itemName}; {worldSummary} still pending"
+            : $"Latest listings confirmed for {itemName}; {worldSummary} still pending";
+    }
+
     public string Failure(string errorText)
         => Festive
             ? $"Starlight market check failed: {errorText}"

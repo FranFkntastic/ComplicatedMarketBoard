@@ -5,6 +5,57 @@ namespace ComplicatedMarketBoard.Tests;
 public sealed class MarketListingReconcilerTests
 {
     [Fact]
+    public void DeferredWorldRetainsOnlyPreviousVerifiedPartition()
+    {
+        var freshGolem = Listing("fresh-golem", "Golem", 300);
+        var unverifiedSiren = Listing("unverified-siren", "Siren", 100);
+        var current = Response(
+            [freshGolem, unverifiedSiren],
+            ("Golem", 3_000),
+            ("Siren", 3_000));
+        var previousSiren = Listing("previous-siren", "Siren", 200);
+        var previous = Response(
+            [Listing("old-golem", "Golem", 400), previousSiren],
+            ("Golem", 1_000),
+            ("Siren", 2_000));
+
+        MarketListingReconciler.ApplyDeferredWorldPartitions(
+            current,
+            previous,
+            new Dictionary<string, string> { ["Siren"] = "Still percolating." });
+
+        Assert.Equal([previousSiren, freshGolem], current.Listings);
+        Assert.DoesNotContain(unverifiedSiren, current.Listings);
+        Assert.Equal(3_000, current.WorldUploadTimes["Golem"]);
+        Assert.Equal(2_000, current.WorldUploadTimes["Siren"]);
+        var deferred = Assert.Single(current.DeferredWorlds).Value;
+        Assert.True(deferred.RetainedPreviousPartition);
+        Assert.Equal(2_000, deferred.RetainedUploadTime);
+    }
+
+    [Fact]
+    public void DeferredWorldWithoutPreviousEvidenceIsOmitted()
+    {
+        var freshGolem = Listing("fresh-golem", "Golem", 300);
+        var unverifiedSiren = Listing("unverified-siren", "Siren", 100);
+        var current = Response(
+            [freshGolem, unverifiedSiren],
+            ("Golem", 3_000),
+            ("Siren", 3_000));
+
+        MarketListingReconciler.ApplyDeferredWorldPartitions(
+            current,
+            previous: null,
+            new Dictionary<string, string> { ["Siren"] = "Still percolating." });
+
+        Assert.Equal([freshGolem], current.Listings);
+        Assert.False(current.WorldUploadTimes.ContainsKey("Siren"));
+        var deferred = Assert.Single(current.DeferredWorlds).Value;
+        Assert.False(deferred.RetainedPreviousPartition);
+        Assert.Equal(0, deferred.RetainedUploadTime);
+    }
+
+    [Fact]
     public void ReplaceWorldPartitionPreservesOtherWorldsAndAdvancesExactRows()
     {
         var staleSiren = Listing("old-siren", "Siren", 495_000);
@@ -87,5 +138,15 @@ public sealed class MarketListingReconcilerTests
             PricePerUnit = price,
             Quantity = quantity,
             LastReviewTime = 1,
+        };
+
+    private static UniversalisResponse Response(
+        IList<MarketDataListing> listings,
+        params (string World, long UploadTime)[] revisions)
+        => new()
+        {
+            Status = UniversalisResponseStatus.Success,
+            Listings = listings,
+            WorldUploadTimes = revisions.ToDictionary(revision => revision.World, revision => revision.UploadTime),
         };
 }
