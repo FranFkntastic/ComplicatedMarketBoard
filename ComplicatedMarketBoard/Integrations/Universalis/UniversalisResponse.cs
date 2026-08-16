@@ -65,6 +65,11 @@ public class UniversalisResponse
     public Dictionary<string, long> WorldUploadTimes { get; set; } = [];
 
     /// <summary>
+    /// Gets world partitions that could not be corroborated during this refresh.
+    /// </summary>
+    public Dictionary<string, DeferredWorldPartition> DeferredWorlds { get; set; } = [];
+
+    /// <summary>
     /// Gets the total amount of items currently for sale.
     /// </summary>
     [JsonPropertyName("unitsForSale")]
@@ -145,3 +150,8 @@ public class UniversalisResponse
     [SuppressMessage("Usage", "CA2227:Collection properties should be read only", Justification = "Setter required for JSON deserialization")]
     public IList<MarketDataEntry> Entries { get; set; } = [];
 }
+
+public sealed record DeferredWorldPartition(
+    string Reason,
+    bool RetainedPreviousPartition,
+    long RetainedUploadTime = 0);

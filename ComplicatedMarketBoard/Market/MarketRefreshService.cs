@@ -216,9 +216,14 @@ public sealed class MarketRefreshService
 
         P.MainWindow.CurrentItemUpdate(gameItem);
         SearchHistoryUpdate(gameItem);
+        var completionText = universalisResponse.DeferredWorlds.Count > 0
+            ? vocabulary.PartiallyConfirmed(
+                gameItem.Name,
+                universalisResponse.DeferredWorlds.Keys.ToArray())
+            : vocabulary.Confirmed(gameItem.Name);
         P.MainWindow.CompleteMarketDataRefresh(
             gameItem.Name,
-            vocabulary.Confirmed(gameItem.Name));
+            completionText);
     }
 
     private static string GetUniversalisFailureText(UniversalisResponse response)

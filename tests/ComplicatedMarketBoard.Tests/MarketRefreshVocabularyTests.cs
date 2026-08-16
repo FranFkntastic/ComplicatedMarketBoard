@@ -55,4 +55,12 @@ public sealed class MarketRefreshVocabularyTests
             "Verified 3/8 worlds for Potion",
             MarketRefreshVocabulary.Standard.WorldsVerified("Potion", 3, 8));
     }
+
+    [Fact]
+    public void PartialConfirmationNamesSmallDeferredSet()
+    {
+        Assert.Equal(
+            "Latest listings confirmed for Potion; Siren still pending",
+            MarketRefreshVocabulary.Standard.PartiallyConfirmed("Potion", ["Siren"]));
+    }
 }

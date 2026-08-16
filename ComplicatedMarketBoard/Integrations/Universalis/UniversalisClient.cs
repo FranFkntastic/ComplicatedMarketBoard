@@ -197,6 +197,10 @@ public sealed class UniversalisClient
         var worldProbeCache = new Dictionary<string, MarketFreshnessProbe>(StringComparer.OrdinalIgnoreCase);
         var customScope = P.Config.CustomMarketScopes.FirstOrDefault(scope => scope.Id == P.Config.selectedCustomScopeId);
         if (customScope is not null)
+        {
+            var previousResponse = MarketWorldPartitionPolicy.SelectPreviousVerifiedResponse(
+                gameItem.UniversalisResponse,
+                customScope.Name);
             return await GetCustomScopeData(
                 gameItem,
                 customScope,
@@ -204,7 +208,13 @@ public sealed class UniversalisClient
                 reportProgress,
                 requireCurrentDetails,
                 worldProbeCache,
-                vocabulary);
+                vocabulary,
+                previousResponse);
+        }
+
+        var previousTargetResponse = MarketWorldPartitionPolicy.SelectPreviousVerifiedResponse(
+            gameItem.UniversalisResponse,
+            gameItem.TargetRegion);
 
         return requireCurrentDetails
             ? await GetCurrentDataForTarget(
@@ -213,7 +223,8 @@ public sealed class UniversalisClient
                 cancellationToken,
                 reportProgress,
                 worldProbeCache,
-                vocabulary)
+                vocabulary,
+                previousTargetResponse)
             : await GetDataForTarget(
                 gameItem,
                 gameItem.TargetRegion,
@@ -229,7 +240,8 @@ public sealed class UniversalisClient
         Action<UniversalisRequestProgress>? reportProgress,
         bool requireCurrentDetails,
         Dictionary<string, MarketFreshnessProbe> worldProbeCache,
-        MarketRefreshVocabulary vocabulary)
+        MarketRefreshVocabulary vocabulary,
+        UniversalisResponse? previousVerifiedResponse)
     {
         var targets = P.MainWindow.ScopeCatalog.BuildQueryTargets(customScope.IncludedScopes, P.MainWindow.GetCurrentWorldScopeName());
         if (targets.Count == 0)
@@ -250,7 +262,8 @@ public sealed class UniversalisClient
                     cancellationToken,
                     targetProgress,
                     worldProbeCache,
-                    vocabulary)
+                    vocabulary,
+                    previousVerifiedResponse)
                 : await GetDataForTarget(
                     gameItem,
                     target,
@@ -275,7 +288,8 @@ public sealed class UniversalisClient
         CancellationToken cancellationToken,
         Action<UniversalisRequestProgress>? reportProgress,
         Dictionary<string, MarketFreshnessProbe> worldProbeCache,
-        MarketRefreshVocabulary vocabulary)
+        MarketRefreshVocabulary vocabulary,
+        UniversalisResponse? previousVerifiedResponse)
     {
         var worldNames = P.MainWindow.ScopeCatalog
             .ExpandToWorldNames([targetName], P.MainWindow.GetCurrentWorldScopeName());
@@ -292,6 +306,8 @@ public sealed class UniversalisClient
             $"concurrency {MaxConcurrentRequests}, {MinimumRequestStartInterval.TotalMilliseconds:F0}ms request spacing.");
 
         var worldProbes = new MarketFreshnessProbe?[worldNames.Count];
+        var deferredWorlds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        UniversalisResponse? firstProbeFailure = null;
         var completedWorldCount = 0;
         var pendingProbes = new List<Task<(int Index, string WorldName, MarketFreshnessProbe? Probe, UniversalisResponse? Failure)>>();
         for (var worldIndex = 0; worldIndex < worldNames.Count; worldIndex++)
@@ -312,14 +328,18 @@ public sealed class UniversalisClient
         foreach (var result in fetchedProbes.OrderBy(result => result.Index))
         {
             if (result.Failure is not null)
-                return result.Failure;
+            {
+                firstProbeFailure ??= result.Failure;
+                deferredWorlds[result.WorldName] = GetFailureDetail(
+                    result.Failure,
+                    $"Universalis freshness data was unavailable for {result.WorldName}.");
+                continue;
+            }
             if (result.Probe is null)
             {
-                return new UniversalisResponse
-                {
-                    Status = UniversalisResponseStatus.InvalidData,
-                    FailureDetail = $"Universalis returned no aggregate freshness data for {gameItem.Name} on {result.WorldName}.",
-                };
+                deferredWorlds[result.WorldName] =
+                    $"Universalis returned no aggregate freshness data for {gameItem.Name} on {result.WorldName}.";
+                continue;
             }
 
             worldProbeCache[result.WorldName] = result.Probe;
@@ -327,15 +347,23 @@ public sealed class UniversalisClient
         }
 
         var resolvedWorldProbes = worldProbes
-            .Select(probe => probe ?? throw new InvalidOperationException("A market freshness probe was not populated."))
+            .OfType<MarketFreshnessProbe>()
             .ToArray();
+        if (resolvedWorldProbes.Length == 0)
+        {
+            return firstProbeFailure ?? new UniversalisResponse
+            {
+                Status = UniversalisResponseStatus.InvalidData,
+                FailureDetail = $"Universalis returned no aggregate freshness data for {gameItem.Name} in {targetName}.",
+            };
+        }
         Service.Log.Info(
             $"[Universalis] Aggregate scan completed for {targetName}: {resolvedWorldProbes.Length} worlds in " +
             $"{Stopwatch.GetElapsedTime(scanStartedAt).TotalSeconds:F2}s.");
         TraceFetch(
             "aggregate-scan-completed",
             targetName,
-            $"Resolved freshness probes for {resolvedWorldProbes.Length} worlds.",
+            $"Resolved freshness probes for {resolvedWorldProbes.Length} worlds; deferred {deferredWorlds.Count}.",
             durationMilliseconds: Stopwatch.GetElapsedTime(scanStartedAt).TotalMilliseconds);
 
         var deadline = DateTimeOffset.UtcNow + FreshDetailTimeout;
@@ -363,27 +391,54 @@ public sealed class UniversalisClient
         if (history.Status != UniversalisResponseStatus.Success)
             return history;
 
-        var lastMatch = MarketFreshnessMatcher.CompareScope(
+        var lastMatch = MarketWorldPartitionPolicy.CompareEligibleScope(
             resolvedWorldProbes,
             detailed,
             P.Config.UniversalisHqOnly,
-            P.Config.UniversalisListings);
+            P.Config.UniversalisListings,
+            deferredWorlds);
         if (lastMatch.IsCurrent)
         {
             TraceFetch(
-                "detail-verification-accepted",
+                deferredWorlds.Count == 0
+                    ? "detail-verification-accepted"
+                    : "detail-verification-partial",
                 targetName,
-                lastMatch.Detail,
+                deferredWorlds.Count == 0
+                    ? lastMatch.Detail
+                    : $"Accepted verified worlds while deferring: {string.Join(", ", deferredWorlds.Keys)}.",
                 verificationPass: 1);
-            return MarketListingReconciler.FinalizeVerifiedResponse(
+            return FinalizeVerifiedScope(
                 detailed,
                 history,
-                P.Config.UniversalisListings);
+                P.Config.UniversalisListings,
+                previousVerifiedResponse,
+                deferredWorlds);
         }
 
-        var conflict = lastMatch.Gaps.FirstOrDefault(gap => gap.Kind == MarketFreshnessGapKind.Conflict);
-        if (conflict is not null)
-            return CreateStaleResponse(vocabulary, lastMatch.Detail);
+        MarketWorldPartitionPolicy.DeferGaps(
+            lastMatch.Gaps.Where(gap => gap.Kind == MarketFreshnessGapKind.Conflict),
+            deferredWorlds);
+        lastMatch = MarketWorldPartitionPolicy.CompareEligibleScope(
+            resolvedWorldProbes,
+            detailed,
+            P.Config.UniversalisHqOnly,
+            P.Config.UniversalisListings,
+            deferredWorlds);
+        if (lastMatch.IsCurrent)
+        {
+            TraceFetch(
+                "detail-verification-partial",
+                targetName,
+                $"Accepted verified worlds while deferring: {string.Join(", ", deferredWorlds.Keys)}.",
+                verificationPass: 1);
+            return FinalizeVerifiedScope(
+                detailed,
+                history,
+                P.Config.UniversalisListings,
+                previousVerifiedResponse,
+                deferredWorlds);
+        }
 
         var repairWorlds = lastMatch.Gaps
             .Where(gap => gap.Kind == MarketFreshnessGapKind.AggregateAhead)
@@ -402,79 +457,109 @@ public sealed class UniversalisClient
             usedScopeRepair = true;
             var remaining = deadline - DateTimeOffset.UtcNow;
             if (remaining <= TimeSpan.Zero)
-                return CreateStaleResponse(vocabulary, lastMatch.Detail);
-
-            var retryDelay = MarketFreshnessRetryPolicy.GetBackoff(
-                1,
-                FreshDetailRetryDelay,
-                remaining);
-            await Task.Delay(retryDelay, cancellationToken);
-            verificationPass++;
-            Service.Log.Info(
-                $"[Universalis] Retrying the complete {targetName} detail scope once because " +
-                $"{repairWorlds.Length}/{worldNames.Count} world partitions disagree with aggregate freshness.");
-            TraceFetch(
-                "detail-scope-repair-started",
-                targetName,
-                $"Retrying the complete detail scope once and refreshing probes for: {string.Join(", ", repairWorlds)}.",
-                verificationPass: verificationPass);
-
-            var scopeDetailTask = GetListingDataForTarget(
-                gameItem,
-                targetName,
-                cancellationToken,
-                reportProgress,
-                vocabulary,
-                verificationPass,
-                GetFreshDetailProgress(deadline - DateTimeOffset.UtcNow));
-            var refreshedProbeTasks = repairWorlds.Select(async worldName =>
             {
-                var result = await GetFreshnessProbeForTarget(
+                MarketWorldPartitionPolicy.DeferGaps(lastMatch.Gaps, deferredWorlds);
+                lastMatch = MarketWorldPartitionPolicy.CompareEligibleScope(
+                    resolvedWorldProbes,
+                    detailed,
+                    P.Config.UniversalisHqOnly,
+                    P.Config.UniversalisListings,
+                    deferredWorlds);
+                repairWorlds = [];
+            }
+            else
+            {
+                var retryDelay = MarketFreshnessRetryPolicy.GetBackoff(
+                    1,
+                    FreshDetailRetryDelay,
+                    remaining);
+                await Task.Delay(retryDelay, cancellationToken);
+                verificationPass++;
+                Service.Log.Info(
+                    $"[Universalis] Retrying the complete {targetName} detail scope once because " +
+                    $"{repairWorlds.Length}/{worldNames.Count} world partitions disagree with aggregate freshness.");
+                TraceFetch(
+                    "detail-scope-repair-started",
+                    targetName,
+                    $"Retrying the complete detail scope once and refreshing probes for: {string.Join(", ", repairWorlds)}.",
+                    verificationPass: verificationPass);
+
+                var scopeDetailTask = GetListingDataForTarget(
                     gameItem,
-                    worldName,
+                    targetName,
                     cancellationToken,
-                    reportProgress: null,
+                    reportProgress,
                     vocabulary,
+                    verificationPass,
                     GetFreshDetailProgress(deadline - DateTimeOffset.UtcNow));
-                return (WorldName: worldName, result.Probe, result.Failure);
-            });
-            var refreshedProbes = await Task.WhenAll(refreshedProbeTasks);
-            detailed = await scopeDetailTask;
-            if (detailed.Status != UniversalisResponseStatus.Success)
-                return detailed;
-
-            foreach (var refreshed in refreshedProbes)
-            {
-                if (refreshed.Failure is not null)
-                    return refreshed.Failure;
-                if (refreshed.Probe is null)
+                var refreshedProbeTasks = repairWorlds.Select(async worldName =>
                 {
-                    return new UniversalisResponse
-                    {
-                        Status = UniversalisResponseStatus.InvalidData,
-                        FailureDetail = $"Universalis returned no aggregate freshness data for {gameItem.Name} on {refreshed.WorldName}.",
-                    };
+                    var result = await GetFreshnessProbeForTarget(
+                        gameItem,
+                        worldName,
+                        cancellationToken,
+                        reportProgress: null,
+                        vocabulary,
+                        GetFreshDetailProgress(deadline - DateTimeOffset.UtcNow));
+                    return (WorldName: worldName, result.Probe, result.Failure);
+                });
+                var refreshedProbes = await Task.WhenAll(refreshedProbeTasks);
+                var retriedDetailed = await scopeDetailTask;
+                if (retriedDetailed.Status == UniversalisResponseStatus.Success)
+                {
+                    detailed = retriedDetailed;
+                }
+                else
+                {
+                    Service.Log.Warning(
+                        $"[Universalis] Complete {targetName} detail retry failed; preserving the first successful detail response and continuing with per-world repair.");
                 }
 
-                var probeIndex = Array.FindIndex(
+                foreach (var refreshed in refreshedProbes)
+                {
+                    if (refreshed.Failure is not null)
+                    {
+                        deferredWorlds[refreshed.WorldName] = GetFailureDetail(
+                            refreshed.Failure,
+                            $"Universalis freshness data remained unavailable for {refreshed.WorldName}.");
+                        continue;
+                    }
+                    if (refreshed.Probe is null)
+                    {
+                        deferredWorlds[refreshed.WorldName] =
+                            $"Universalis returned no aggregate freshness data for {gameItem.Name} on {refreshed.WorldName}.";
+                        continue;
+                    }
+
+                    var probeIndex = Array.FindIndex(
+                        resolvedWorldProbes,
+                        probe => string.Equals(
+                            probe.TargetName,
+                            refreshed.WorldName,
+                            StringComparison.OrdinalIgnoreCase));
+                    if (probeIndex >= 0)
+                        resolvedWorldProbes[probeIndex] = refreshed.Probe;
+                }
+
+                lastMatch = MarketWorldPartitionPolicy.CompareEligibleScope(
                     resolvedWorldProbes,
-                    probe => string.Equals(
-                        probe.TargetName,
-                        refreshed.WorldName,
-                        StringComparison.OrdinalIgnoreCase));
-                if (probeIndex >= 0)
-                    resolvedWorldProbes[probeIndex] = refreshed.Probe;
+                    detailed,
+                    P.Config.UniversalisHqOnly,
+                    P.Config.UniversalisListings,
+                    deferredWorlds);
+                if (!lastMatch.IsCurrent)
+                {
+                    MarketWorldPartitionPolicy.DeferGaps(lastMatch.Gaps, deferredWorlds);
+                    lastMatch = MarketWorldPartitionPolicy.CompareEligibleScope(
+                        resolvedWorldProbes,
+                        detailed,
+                        P.Config.UniversalisHqOnly,
+                        P.Config.UniversalisListings,
+                        deferredWorlds);
+                }
+
+                repairWorlds = [];
             }
-
-            lastMatch = MarketFreshnessMatcher.CompareScope(
-                resolvedWorldProbes,
-                detailed,
-                P.Config.UniversalisHqOnly,
-                P.Config.UniversalisListings);
-            if (!lastMatch.IsCurrent)
-                return CreateStaleResponse(vocabulary, lastMatch.Detail);
-
-            repairWorlds = [];
         }
 
         while (repairWorlds.Length > 0
@@ -521,16 +606,24 @@ public sealed class UniversalisClient
             foreach (var repair in repairs)
             {
                 if (repair.Partition.Status != UniversalisResponseStatus.Success)
-                    return repair.Partition;
+                {
+                    deferredWorlds[repair.WorldName] = GetFailureDetail(
+                        repair.Partition,
+                        $"Detailed listings remained unavailable for {repair.WorldName}.");
+                    continue;
+                }
                 if (repair.ProbeFailure is not null)
-                    return repair.ProbeFailure;
+                {
+                    deferredWorlds[repair.WorldName] = GetFailureDetail(
+                        repair.ProbeFailure,
+                        $"Universalis freshness data remained unavailable for {repair.WorldName}.");
+                    continue;
+                }
                 if (repair.Probe is null)
                 {
-                    return new UniversalisResponse
-                    {
-                        Status = UniversalisResponseStatus.InvalidData,
-                        FailureDetail = $"Universalis returned no aggregate freshness data for {gameItem.Name} on {repair.WorldName}.",
-                    };
+                    deferredWorlds[repair.WorldName] =
+                        $"Universalis returned no aggregate freshness data for {gameItem.Name} on {repair.WorldName}.";
+                    continue;
                 }
 
                 repairedPartitions[repair.WorldName] = repair.Partition;
@@ -545,17 +638,26 @@ public sealed class UniversalisClient
                 MarketListingReconciler.ReplaceWorldPartition(detailed, repair.WorldName, repair.Partition);
             }
 
-            lastMatch = MarketFreshnessMatcher.CompareScope(
+            lastMatch = MarketWorldPartitionPolicy.CompareEligibleScope(
                 resolvedWorldProbes,
                 detailed,
                 P.Config.UniversalisHqOnly,
-                P.Config.UniversalisListings);
+                P.Config.UniversalisListings,
+                deferredWorlds);
             if (lastMatch.IsCurrent)
                 break;
 
-            conflict = lastMatch.Gaps.FirstOrDefault(gap => gap.Kind == MarketFreshnessGapKind.Conflict);
-            if (conflict is not null)
-                return CreateStaleResponse(vocabulary, lastMatch.Detail);
+            MarketWorldPartitionPolicy.DeferGaps(
+                lastMatch.Gaps.Where(gap => gap.Kind == MarketFreshnessGapKind.Conflict),
+                deferredWorlds);
+            lastMatch = MarketWorldPartitionPolicy.CompareEligibleScope(
+                resolvedWorldProbes,
+                detailed,
+                P.Config.UniversalisHqOnly,
+                P.Config.UniversalisListings,
+                deferredWorlds);
+            if (lastMatch.IsCurrent)
+                break;
 
             var revisionsChanged = MarketFreshnessRetryPolicy.HasRevisionChange(previousGaps, lastMatch.Gaps);
             if (!revisionsChanged)
@@ -574,7 +676,9 @@ public sealed class UniversalisClient
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToArray();
             var remaining = deadline - DateTimeOffset.UtcNow;
-            if (repairWorlds.Length > 0 && remaining > TimeSpan.Zero)
+            if (repairWorlds.Length > 0
+                && targetedRepairPass < MarketFreshnessRetryPolicy.MaxTargetedRepairPasses
+                && remaining > TimeSpan.Zero)
             {
                 var retryDelay = MarketFreshnessRetryPolicy.GetBackoff(
                     targetedRepairPass,
@@ -585,7 +689,28 @@ public sealed class UniversalisClient
         }
 
         if (!lastMatch.IsCurrent)
-            return CreateStaleResponse(vocabulary, lastMatch.Detail);
+        {
+            MarketWorldPartitionPolicy.DeferGaps(lastMatch.Gaps, deferredWorlds);
+            lastMatch = MarketWorldPartitionPolicy.CompareEligibleScope(
+                resolvedWorldProbes,
+                detailed,
+                P.Config.UniversalisHqOnly,
+                P.Config.UniversalisListings,
+                deferredWorlds);
+        }
+
+        foreach (var deferredWorld in deferredWorlds.Keys)
+            repairedPartitions.Remove(deferredWorld);
+
+        var verifiedWorldCount = MarketWorldPartitionPolicy.CountVerifiedWorlds(
+            resolvedWorldProbes,
+            deferredWorlds);
+        if (verifiedWorldCount == 0 || !lastMatch.IsCurrent)
+        {
+            return CreateStaleResponse(
+                vocabulary,
+                "Universalis did not return a corroborated world partition for this scope.");
+        }
 
         if (detailed.ListingPageMayBeTruncated
             && detailed.Listings.Count < P.Config.UniversalisListings
@@ -611,13 +736,22 @@ public sealed class UniversalisClient
             foreach (var repair in repairedPartitions)
                 MarketListingReconciler.ReplaceWorldPartition(refill, repair.Key, repair.Value);
             detailed = refill;
-            lastMatch = MarketFreshnessMatcher.CompareScope(
+            lastMatch = MarketWorldPartitionPolicy.CompareEligibleScope(
                 resolvedWorldProbes,
                 detailed,
                 P.Config.UniversalisHqOnly,
-                P.Config.UniversalisListings);
+                P.Config.UniversalisListings,
+                deferredWorlds);
             if (!lastMatch.IsCurrent)
-                return CreateStaleResponse(vocabulary, lastMatch.Detail);
+            {
+                MarketWorldPartitionPolicy.DeferGaps(lastMatch.Gaps, deferredWorlds);
+                lastMatch = MarketWorldPartitionPolicy.CompareEligibleScope(
+                    resolvedWorldProbes,
+                    detailed,
+                    P.Config.UniversalisHqOnly,
+                    P.Config.UniversalisListings,
+                    deferredWorlds);
+            }
         }
 
         if (detailed.ListingPageMayBeTruncated
@@ -629,16 +763,22 @@ public sealed class UniversalisClient
         }
 
         TraceFetch(
-            "detail-verification-accepted",
+            deferredWorlds.Count == 0
+                ? "detail-verification-accepted"
+                : "detail-verification-partial",
             targetName,
-            usedScopeRepair
+            deferredWorlds.Count > 0
+                ? $"Accepted {verifiedWorldCount}/{worldNames.Count} verified worlds; deferred {string.Join(", ", deferredWorlds.Keys)}."
+                : usedScopeRepair
                 ? "Accepted after one complete-scope detail repair."
                 : $"Accepted after targeted repair of {string.Join(", ", repairedPartitions.Keys)}.",
             verificationPass: verificationPass);
-        return MarketListingReconciler.FinalizeVerifiedResponse(
+        return FinalizeVerifiedScope(
             detailed,
             history,
-            P.Config.UniversalisListings);
+            P.Config.UniversalisListings,
+            previousVerifiedResponse,
+            deferredWorlds);
 
         async Task<(int Index, string WorldName, MarketFreshnessProbe? Probe, UniversalisResponse? Failure)> FetchWorldProbeAsync(
             int index,
@@ -933,6 +1073,7 @@ public sealed class UniversalisClient
     {
         var mergedWorldOutOfDate = new Dictionary<string, double>();
         var mergedWorldUploadTimes = new Dictionary<string, long>();
+        var mergedDeferredWorlds = new Dictionary<string, DeferredWorldPartition>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var response in responses)
         {
@@ -947,6 +1088,9 @@ public sealed class UniversalisClient
                 if (!mergedWorldUploadTimes.TryGetValue(uploadTime.Key, out var existing) || uploadTime.Value > existing)
                     mergedWorldUploadTimes[uploadTime.Key] = uploadTime.Value;
             }
+
+            foreach (var deferred in response.DeferredWorlds)
+                mergedDeferredWorlds[deferred.Key] = deferred.Value;
         }
 
         return new UniversalisResponse
@@ -958,6 +1102,7 @@ public sealed class UniversalisClient
             FetchTime = responses.Min(response => response.FetchTime),
             LatestUploadTime = mergedWorldUploadTimes.Count > 0 ? mergedWorldUploadTimes.Values.Max() : responses.Max(response => response.LatestUploadTime),
             WorldUploadTimes = mergedWorldUploadTimes,
+            DeferredWorlds = mergedDeferredWorlds,
             UnitsForSale = responses.Sum(response => response.UnitsForSale),
             AveragePrice = AverageWeightedByListings(responses, response => response.AveragePrice),
             AveragePriceNq = AverageWeightedByListings(responses, response => response.AveragePriceNq),
@@ -988,6 +1133,34 @@ public sealed class UniversalisClient
 
         return responses.Sum(response => selector(response) * response.Listings.Count) / totalListings;
     }
+
+    private static UniversalisResponse FinalizeVerifiedScope(
+        UniversalisResponse detailed,
+        UniversalisResponse history,
+        int listingLimit,
+        UniversalisResponse? previousVerifiedResponse,
+        IReadOnlyDictionary<string, string> deferredWorlds)
+    {
+        if (deferredWorlds.Count > 0)
+        {
+            MarketListingReconciler.ApplyDeferredWorldPartitions(
+                detailed,
+                previousVerifiedResponse,
+                deferredWorlds);
+        }
+
+        return MarketListingReconciler.FinalizeVerifiedResponse(
+            detailed,
+            history,
+            listingLimit);
+    }
+
+    private static string GetFailureDetail(
+        UniversalisResponse failure,
+        string fallback)
+        => string.IsNullOrWhiteSpace(failure.FailureDetail)
+            ? fallback
+            : failure.FailureDetail;
 
     private async Task<UniversalisResponse> GetListingDataForTarget(
         MarketItem gameItem,
