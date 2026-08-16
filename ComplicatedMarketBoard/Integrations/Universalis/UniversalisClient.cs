@@ -699,6 +699,9 @@ public sealed class UniversalisClient
                 deferredWorlds);
         }
 
+        foreach (var deferredWorld in deferredWorlds.Keys)
+            repairedPartitions.Remove(deferredWorld);
+
         var verifiedWorldCount = MarketWorldPartitionPolicy.CountVerifiedWorlds(
             resolvedWorldProbes,
             deferredWorlds);
