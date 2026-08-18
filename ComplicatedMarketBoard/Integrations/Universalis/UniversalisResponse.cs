@@ -16,6 +16,12 @@ public class UniversalisResponseStatus
     public const ulong UnknownError = 99;
 }
 
+public enum MarketListingCoverageStatus
+{
+    Complete,
+    DuplicateLimited,
+}
+
 /// <summary>
 /// A model representing a market data response from Universalis.
 /// </summary>
@@ -130,6 +136,16 @@ public class UniversalisResponse
     /// Gets whether the final upstream listing page may have been truncated.
     /// </summary>
     public bool ListingPageMayBeTruncated { get; set; }
+
+    /// <summary>
+    /// Gets the number of unique listings CMB asked the verified response to contain.
+    /// </summary>
+    public int RequestedListingCount { get; set; }
+
+    /// <summary>
+    /// Gets whether Universalis supplied enough distinct listing identities to satisfy the request.
+    /// </summary>
+    public MarketListingCoverageStatus ListingCoverage { get; set; }
 
     /// <summary>
     /// Gets listing identities whose repeated rows disagreed on listing facts.

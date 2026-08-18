@@ -63,4 +63,30 @@ public sealed class MarketRefreshVocabularyTests
             "Latest listings confirmed for Potion; Siren still pending",
             MarketRefreshVocabulary.Standard.PartiallyConfirmed("Potion", ["Siren"]));
     }
+
+    [Fact]
+    public void PartialConfirmationExplainsDuplicateLimitedCoverage()
+    {
+        Assert.Equal(
+            "Latest listings confirmed for Whale-class Pressure Hull; showing 22 of 70 requested listings",
+            MarketRefreshVocabulary.Standard.PartiallyConfirmed(
+                "Whale-class Pressure Hull",
+                [],
+                listingCount: 22,
+                requestedListingCount: 70,
+                duplicateLimited: true));
+    }
+
+    [Fact]
+    public void PartialConfirmationComposesCoverageAndDeferredWorlds()
+    {
+        Assert.Equal(
+            "Latest listings confirmed for Potion; showing 22 of 70 requested listings; Siren still pending",
+            MarketRefreshVocabulary.Standard.PartiallyConfirmed(
+                "Potion",
+                ["Siren"],
+                listingCount: 22,
+                requestedListingCount: 70,
+                duplicateLimited: true));
+    }
 }

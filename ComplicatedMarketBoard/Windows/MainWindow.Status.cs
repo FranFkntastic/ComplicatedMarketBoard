@@ -49,6 +49,9 @@ public partial class MainWindow
         if (response.FetchTime == 0)
             return Ui.ColourWhite3;
 
+        if (response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited)
+            return Ui.ColourHq;
+
         return Ui.ColourCyan;
     }
 
@@ -97,9 +100,6 @@ public partial class MainWindow
         if (response.Status != UniversalisResponseStatus.Success)
             return $"Universalis status: {GetUniversalisStatusLabel(response.Status)}.";
 
-        if (response.WorldOutOfDate.Count == 0)
-            return "No freshness data was returned for this item.";
-
         return GetMarketFreshnessTooltip();
     }
 
@@ -109,8 +109,11 @@ public partial class MainWindow
     private string BuildMarketFreshnessTooltip()
     {
         var response = CurrentItem.UniversalisResponse;
+        var listingCoverage = response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited
+            ? $"Listing coverage: {response.Listings.Count} current of {response.RequestedListingCount} requested (Universalis repeated rows)"
+            : $"Listings: {response.Listings.Count}";
         if (response.WorldOutOfDate.Count == 0)
-            return "No freshness data was returned for this item.";
+            return $"{listingCoverage}\nNo freshness data was returned for this item.";
 
         var freshness = response.WorldOutOfDate.OrderByDescending(w => w.Value).ToList();
         var newest = freshness.MinBy(w => w.Value);
@@ -132,7 +135,7 @@ public partial class MainWindow
             $"Freshest market: {newest.Key} ({newest.Value:F2} hrs)\n" +
             $"Stalest market: {oldest.Key} ({oldest.Value:F2} hrs)\n" +
             $"Worlds: {response.WorldOutOfDate.Count}\n" +
-            $"Listings: {response.Listings.Count}\n" +
+            $"{listingCoverage}\n" +
             $"Recent sales: {response.Entries.Count}";
     }
 
