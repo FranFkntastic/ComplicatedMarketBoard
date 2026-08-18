@@ -100,9 +100,6 @@ public partial class MainWindow
         if (response.Status != UniversalisResponseStatus.Success)
             return $"Universalis status: {GetUniversalisStatusLabel(response.Status)}.";
 
-        if (response.WorldOutOfDate.Count == 0)
-            return "No freshness data was returned for this item.";
-
         return GetMarketFreshnessTooltip();
     }
 

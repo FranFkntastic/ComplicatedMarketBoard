@@ -1102,6 +1102,12 @@ public sealed class UniversalisClient
         var duplicateLimited = responses.Any(response =>
             response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited
             || MarketListingCoveragePolicy.IsDuplicateLimited(response, P.Config.UniversalisListings));
+        var mergedListings = MarketListingNormalizer.Normalize(
+                responses.SelectMany(response => response.Listings))
+            .OrderBy(listing => listing.PricePerUnit)
+            .ThenBy(listing => listing.Quantity)
+            .Take(P.Config.UniversalisListings)
+            .ToList();
         var merged = new UniversalisResponse
         {
             Status = UniversalisResponseStatus.Success,
@@ -1115,19 +1121,14 @@ public sealed class UniversalisClient
             RawListingCount = responses.Sum(response => response.RawListingCount),
             ListingRequestLimit = responses.Sum(response => response.ListingRequestLimit),
             ListingPageMayBeTruncated = responses.Any(response => response.ListingPageMayBeTruncated),
-            UnitsForSale = responses.Sum(response => response.UnitsForSale),
+            UnitsForSale = mergedListings.Sum(listing => listing.Quantity),
             AveragePrice = AverageWeightedByListings(responses, response => response.AveragePrice),
             AveragePriceNq = AverageWeightedByListings(responses, response => response.AveragePriceNq),
             AveragePriceHq = AverageWeightedByListings(responses, response => response.AveragePriceHq),
             Velocity = responses.Sum(response => response.Velocity),
             VelocityNq = responses.Sum(response => response.VelocityNq),
             VelocityHq = responses.Sum(response => response.VelocityHq),
-            Listings = MarketListingNormalizer.Normalize(
-                    responses.SelectMany(response => response.Listings))
-                .OrderBy(listing => listing.PricePerUnit)
-                .ThenBy(listing => listing.Quantity)
-                .Take(P.Config.UniversalisListings)
-                .ToList(),
+            Listings = mergedListings,
             Entries = responses
                 .SelectMany(response => response.Entries)
                 .OrderByDescending(entry => entry.Timestamp)
