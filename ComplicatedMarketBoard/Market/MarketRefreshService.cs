@@ -216,10 +216,14 @@ public sealed class MarketRefreshService
 
         P.MainWindow.CurrentItemUpdate(gameItem);
         SearchHistoryUpdate(gameItem);
-        var completionText = universalisResponse.DeferredWorlds.Count > 0
+        var duplicateLimited = universalisResponse.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited;
+        var completionText = universalisResponse.DeferredWorlds.Count > 0 || duplicateLimited
             ? vocabulary.PartiallyConfirmed(
                 gameItem.Name,
-                universalisResponse.DeferredWorlds.Keys.ToArray())
+                universalisResponse.DeferredWorlds.Keys.ToArray(),
+                universalisResponse.Listings.Count,
+                universalisResponse.RequestedListingCount,
+                duplicateLimited)
             : vocabulary.Confirmed(gameItem.Name);
         P.MainWindow.CompleteMarketDataRefresh(
             gameItem.Name,

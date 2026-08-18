@@ -82,14 +82,28 @@ public sealed class MarketRefreshVocabulary
 
     public string PartiallyConfirmed(
         string itemName,
-        IReadOnlyCollection<string> deferredWorlds)
+        IReadOnlyCollection<string> deferredWorlds,
+        int listingCount = 0,
+        int requestedListingCount = 0,
+        bool duplicateLimited = false)
     {
-        var worldSummary = deferredWorlds.Count <= 3
-            ? string.Join(", ", deferredWorlds)
-            : $"{deferredWorlds.Count} worlds";
-        return Festive
-            ? $"Latest listings made the nice list for {itemName}; {worldSummary} still pending"
-            : $"Latest listings confirmed for {itemName}; {worldSummary} still pending";
+        var details = new List<string>();
+        if (duplicateLimited)
+            details.Add($"showing {listingCount} of {requestedListingCount} requested listings");
+        if (deferredWorlds.Count > 0)
+        {
+            var worldSummary = deferredWorlds.Count <= 3
+                ? string.Join(", ", deferredWorlds)
+                : $"{deferredWorlds.Count} worlds";
+            details.Add($"{worldSummary} still pending");
+        }
+
+        var prefix = Festive
+            ? $"Latest listings made the nice list for {itemName}"
+            : $"Latest listings confirmed for {itemName}";
+        return details.Count == 0
+            ? prefix
+            : $"{prefix}; {string.Join("; ", details)}";
     }
 
     public string Failure(string errorText)

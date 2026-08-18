@@ -130,6 +130,31 @@ public sealed class MarketListingReconcilerTests
         Assert.Equal(200, result.FetchTime);
     }
 
+    [Fact]
+    public void FinalizeVerifiedResponseKeepsOnlyFreshUniqueRowsWithoutAStaleTail()
+    {
+        var fresh = Enumerable.Range(0, 22)
+            .Select(index => Listing($"fresh-{index}", "Faerie", 100 + index, quantity: index + 1))
+            .ToList();
+        var listings = new UniversalisResponse
+        {
+            Status = UniversalisResponseStatus.Success,
+            RawListingCount = 200,
+            ListingRequestLimit = 200,
+            ListingPageMayBeTruncated = true,
+            Listings = fresh,
+        };
+
+        var result = MarketListingReconciler.FinalizeVerifiedResponse(
+            listings,
+            new UniversalisResponse(),
+            listingLimit: 70);
+
+        Assert.Equal(22, result.Listings.Count);
+        Assert.Equal(fresh.Sum(listing => listing.Quantity), result.UnitsForSale);
+        Assert.All(result.Listings, listing => Assert.StartsWith("fresh-", listing.ListingId));
+    }
+
     private static MarketDataListing Listing(string id, string world, long price, long quantity = 1)
         => new()
         {

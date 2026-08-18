@@ -96,8 +96,9 @@ public sealed class UniversalisClient
         MarketItem gameItem,
         string targetName,
         bool highQualityOnly,
-        CancellationToken cancellationToken) =>
-        await RunWithDiagnosticsAsync(
+        CancellationToken cancellationToken)
+    {
+        var response = await RunWithDiagnosticsAsync(
             gameItem,
             targetName,
             requireCurrentDetails: false,
@@ -109,6 +110,11 @@ public sealed class UniversalisClient
                 MarketRefreshVocabulary.Standard,
                 highQualityOnly: highQualityOnly),
             highQualityOnly);
+
+        return MarketListingCoveragePolicy.Classify(
+            response,
+            P.Config.UniversalisListings);
+    }
 
     private async Task<UniversalisResponse> RunWithDiagnosticsAsync(
         MarketItem gameItem,
@@ -196,12 +202,13 @@ public sealed class UniversalisClient
     {
         var worldProbeCache = new Dictionary<string, MarketFreshnessProbe>(StringComparer.OrdinalIgnoreCase);
         var customScope = P.Config.CustomMarketScopes.FirstOrDefault(scope => scope.Id == P.Config.selectedCustomScopeId);
+        UniversalisResponse response;
         if (customScope is not null)
         {
             var previousResponse = MarketWorldPartitionPolicy.SelectPreviousVerifiedResponse(
                 gameItem.UniversalisResponse,
                 customScope.Name);
-            return await GetCustomScopeData(
+            response = await GetCustomScopeData(
                 gameItem,
                 customScope,
                 cancellationToken,
@@ -211,26 +218,33 @@ public sealed class UniversalisClient
                 vocabulary,
                 previousResponse);
         }
+        else
+        {
+            var previousTargetResponse = MarketWorldPartitionPolicy.SelectPreviousVerifiedResponse(
+                gameItem.UniversalisResponse,
+                gameItem.TargetRegion);
 
-        var previousTargetResponse = MarketWorldPartitionPolicy.SelectPreviousVerifiedResponse(
-            gameItem.UniversalisResponse,
-            gameItem.TargetRegion);
+            response = requireCurrentDetails
+                ? await GetCurrentDataForTarget(
+                    gameItem,
+                    gameItem.TargetRegion,
+                    cancellationToken,
+                    reportProgress,
+                    worldProbeCache,
+                    vocabulary,
+                    previousTargetResponse)
+                : await GetDataForTarget(
+                    gameItem,
+                    gameItem.TargetRegion,
+                    cancellationToken,
+                    reportProgress,
+                    vocabulary);
+        }
 
-        return requireCurrentDetails
-            ? await GetCurrentDataForTarget(
-                gameItem,
-                gameItem.TargetRegion,
-                cancellationToken,
-                reportProgress,
-                worldProbeCache,
-                vocabulary,
-                previousTargetResponse)
-            : await GetDataForTarget(
-                gameItem,
-                gameItem.TargetRegion,
-                cancellationToken,
-                reportProgress,
-                vocabulary);
+        return MarketListingCoveragePolicy.Classify(
+            response,
+            P.Config.UniversalisListings,
+            response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited);
     }
 
     private async Task<UniversalisResponse> GetCustomScopeData(
@@ -754,14 +768,6 @@ public sealed class UniversalisClient
             }
         }
 
-        if (detailed.ListingPageMayBeTruncated
-            && detailed.Listings.Count < P.Config.UniversalisListings)
-        {
-            return CreateStaleResponse(
-                vocabulary,
-                "Universalis duplicate rows exhausted the bounded listing request before CMB could prove the configured unique-listing count.");
-        }
-
         TraceFetch(
             deferredWorlds.Count == 0
                 ? "detail-verification-accepted"
@@ -1093,7 +1099,10 @@ public sealed class UniversalisClient
                 mergedDeferredWorlds[deferred.Key] = deferred.Value;
         }
 
-        return new UniversalisResponse
+        var duplicateLimited = responses.Any(response =>
+            response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited
+            || MarketListingCoveragePolicy.IsDuplicateLimited(response, P.Config.UniversalisListings));
+        var merged = new UniversalisResponse
         {
             Status = UniversalisResponseStatus.Success,
             ItemId = (ulong)gameItem.Id,
@@ -1103,6 +1112,9 @@ public sealed class UniversalisClient
             LatestUploadTime = mergedWorldUploadTimes.Count > 0 ? mergedWorldUploadTimes.Values.Max() : responses.Max(response => response.LatestUploadTime),
             WorldUploadTimes = mergedWorldUploadTimes,
             DeferredWorlds = mergedDeferredWorlds,
+            RawListingCount = responses.Sum(response => response.RawListingCount),
+            ListingRequestLimit = responses.Sum(response => response.ListingRequestLimit),
+            ListingPageMayBeTruncated = responses.Any(response => response.ListingPageMayBeTruncated),
             UnitsForSale = responses.Sum(response => response.UnitsForSale),
             AveragePrice = AverageWeightedByListings(responses, response => response.AveragePrice),
             AveragePriceNq = AverageWeightedByListings(responses, response => response.AveragePriceNq),
@@ -1123,6 +1135,11 @@ public sealed class UniversalisClient
                 .ToList(),
             ScopeName = customScope.Name,
         };
+
+        return MarketListingCoveragePolicy.Classify(
+            merged,
+            P.Config.UniversalisListings,
+            duplicateLimited);
     }
 
     private static double AverageWeightedByListings(List<UniversalisResponse> responses, Func<UniversalisResponse, double> selector)
@@ -1134,13 +1151,27 @@ public sealed class UniversalisClient
         return responses.Sum(response => selector(response) * response.Listings.Count) / totalListings;
     }
 
-    private static UniversalisResponse FinalizeVerifiedScope(
+    private UniversalisResponse FinalizeVerifiedScope(
         UniversalisResponse detailed,
         UniversalisResponse history,
         int listingLimit,
         UniversalisResponse? previousVerifiedResponse,
         IReadOnlyDictionary<string, string> deferredWorlds)
     {
+        var duplicateLimited = MarketListingCoveragePolicy.IsDuplicateLimited(
+            detailed,
+            listingLimit);
+        if (duplicateLimited)
+        {
+            TraceFetch(
+                "detail-verification-duplicate-limited",
+                detailed.ScopeName,
+                $"Accepted {detailed.Listings.Count} verified unique listings from {detailed.RawListingCount} Universalis rows after bounded expansion; requested {listingLimit} unique listings.");
+            Service.Log.Warning(
+                $"[Universalis] Accepted duplicate-limited current response for {detailed.ScopeName}: " +
+                $"{detailed.Listings.Count}/{listingLimit} unique listings from {detailed.RawListingCount} rows.");
+        }
+
         if (deferredWorlds.Count > 0)
         {
             MarketListingReconciler.ApplyDeferredWorldPartitions(
@@ -1149,10 +1180,13 @@ public sealed class UniversalisClient
                 deferredWorlds);
         }
 
-        return MarketListingReconciler.FinalizeVerifiedResponse(
-            detailed,
-            history,
-            listingLimit);
+        return MarketListingCoveragePolicy.Classify(
+            MarketListingReconciler.FinalizeVerifiedResponse(
+                detailed,
+                history,
+                listingLimit),
+            listingLimit,
+            duplicateLimited);
     }
 
     private static string GetFailureDetail(
