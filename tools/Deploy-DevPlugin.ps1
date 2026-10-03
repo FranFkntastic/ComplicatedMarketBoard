@@ -285,7 +285,7 @@ if ($Profile -ne 'Primary') {
     $buildDirectory = Join-Path $temporaryBuildRoot 'output'
 }
 
-$buildArguments = @('build', $project, '-c', 'Debug', '--no-restore', '--no-incremental', "-p:FranthropyDalamudProject=$FranthropyDalamudProject")
+$buildArguments = @('build', $project, '-c', 'Debug', '--no-incremental', '-p:RestoreLockedMode=true', "-p:FranthropyDalamudProject=$FranthropyDalamudProject")
 if ($Profile -ne 'Primary') {
     $buildArguments += "-p:OutputPath=$buildDirectory"
 }
