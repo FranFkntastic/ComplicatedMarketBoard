@@ -16,6 +16,10 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+if ($SkipBuild) {
+    throw "Pinned releases require a fresh build; -SkipBuild cannot verify existing artifact provenance."
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $projectDir = Join-Path $repoRoot "ComplicatedMarketBoard"
 $projectPath = Join-Path $projectDir "ComplicatedMarketBoard.csproj"
