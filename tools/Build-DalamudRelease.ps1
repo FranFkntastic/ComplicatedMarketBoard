@@ -53,6 +53,7 @@ if (-not $SkipBuild) {
         $projectPath,
         "-c",
         $Configuration,
+        "--no-incremental",
         "-p:UseSharedCompilation=false"
     )
     if (-not [string]::IsNullOrWhiteSpace($FranthropyDalamudProject)) {
