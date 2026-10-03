@@ -16,10 +16,17 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+if ($SkipBuild) {
+    throw "Pinned releases require a fresh build; -SkipBuild cannot verify existing artifact provenance."
+}
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $projectDir = Join-Path $repoRoot "ComplicatedMarketBoard"
 $projectPath = Join-Path $projectDir "ComplicatedMarketBoard.csproj"
 $pluginName = "ComplicatedMarketBoard"
+
+$dependency = & (Join-Path $PSScriptRoot 'Test-FranthropyDependency.ps1') -FranthropyDalamudProject $FranthropyDalamudProject | ConvertFrom-Json
+$FranthropyDalamudProject = $dependency.Project
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repoRoot "dist"
@@ -46,6 +53,8 @@ if (-not $SkipBuild) {
         $projectPath,
         "-c",
         $Configuration,
+        "--no-incremental",
+        "-p:RestoreLockedMode=true",
         "-p:UseSharedCompilation=false"
     )
     if (-not [string]::IsNullOrWhiteSpace($FranthropyDalamudProject)) {

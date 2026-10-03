@@ -70,7 +70,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
                 PluginConfigDirectory = pluginInterface.GetPluginConfigDirectory(),
                 PluginName = Name,
                 PluginInstanceId = Guid.NewGuid().ToString("N"),
-                GameBuild = Franthropy.Dalamud.Diagnostics.GamePatchCompatibilityGate.ReadCurrentGameVersion(),
+                GameBuild = Franthropy.Dalamud.Diagnostics.GameClientVersion.ReadCurrentGameVersion(),
                 GameInventory = gameInventory,
                 PlayerState = playerState,
                 AddonLifecycle = addonLifecycle,
