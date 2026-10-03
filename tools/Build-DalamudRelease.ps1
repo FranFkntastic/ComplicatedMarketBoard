@@ -21,6 +21,9 @@ $projectDir = Join-Path $repoRoot "ComplicatedMarketBoard"
 $projectPath = Join-Path $projectDir "ComplicatedMarketBoard.csproj"
 $pluginName = "ComplicatedMarketBoard"
 
+$dependency = & (Join-Path $PSScriptRoot 'Test-FranthropyDependency.ps1') -FranthropyDalamudProject $FranthropyDalamudProject | ConvertFrom-Json
+$FranthropyDalamudProject = $dependency.Project
+
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repoRoot "dist"
 }

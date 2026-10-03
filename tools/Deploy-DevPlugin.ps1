@@ -11,6 +11,8 @@ param(
 
     [string]$ExpectedCommit,
 
+    [string]$FranthropyDalamudProject,
+
     [string]$DabPath,
 
     [ValidateRange(1, 120)]
@@ -251,27 +253,12 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and -not $commit.StartsW
     throw "CMB master '$commit' does not match expected commit '$ExpectedCommit'."
 }
 
-$franthropy = Join-Path $workspace 'Franthropy'
-$requiredFranthropyCommit = if (Test-Path -LiteralPath $franthropyCommitPath -PathType Leaf) {
-    (Get-Content -LiteralPath $franthropyCommitPath -Raw).Trim()
-}
-else {
-    throw "CMB's Franthropy consumer receipt is missing at '$franthropyCommitPath'."
-}
-if ($requiredFranthropyCommit -notmatch '^[0-9a-fA-F]{40}$') {
-    throw "CMB's Franthropy consumer receipt is not a full Git commit."
-}
-$franthropyDirty = (& git -C $franthropy status --porcelain=v1 --untracked-files=all | Out-String).Trim()
-if ($LASTEXITCODE -ne 0 -or -not [string]::IsNullOrWhiteSpace($franthropyDirty)) {
-    throw "Franthropy must be a clean sibling checkout before CMB deployment."
-}
+$dependency = & (Join-Path $PSScriptRoot 'Test-FranthropyDependency.ps1') -FranthropyDalamudProject $FranthropyDalamudProject | ConvertFrom-Json
+$franthropy = $dependency.Root
+$FranthropyDalamudProject = $dependency.Project
 & git -C $franthropy merge-base --is-ancestor HEAD origin/main
 if ($LASTEXITCODE -ne 0) {
     throw "Franthropy HEAD is not published on origin/main."
-}
-& git -C $franthropy merge-base --is-ancestor $requiredFranthropyCommit HEAD
-if ($LASTEXITCODE -ne 0) {
-    throw "Franthropy HEAD does not contain CMB's required revision '$requiredFranthropyCommit'."
 }
 
 $registeredDll = Get-RegisteredDllPath
@@ -298,7 +285,7 @@ if ($Profile -ne 'Primary') {
     $buildDirectory = Join-Path $temporaryBuildRoot 'output'
 }
 
-$buildArguments = @('build', $project, '-c', 'Debug', '--no-restore', '--no-incremental')
+$buildArguments = @('build', $project, '-c', 'Debug', '--no-restore', '--no-incremental', "-p:FranthropyDalamudProject=$FranthropyDalamudProject")
 if ($Profile -ne 'Primary') {
     $buildArguments += "-p:OutputPath=$buildDirectory"
 }
