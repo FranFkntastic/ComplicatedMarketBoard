@@ -54,6 +54,7 @@ if (-not $SkipBuild) {
         "-c",
         $Configuration,
         "--no-incremental",
+        "-p:RestoreLockedMode=true",
         "-p:UseSharedCompilation=false"
     )
     if (-not [string]::IsNullOrWhiteSpace($FranthropyDalamudProject)) {
