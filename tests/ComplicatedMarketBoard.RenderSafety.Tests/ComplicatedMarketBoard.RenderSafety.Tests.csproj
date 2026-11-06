@@ -5,7 +5,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
-    <FranthropyDalamudProject Condition="'$(FranthropyDalamudProject)' == ''">..\..\..\Franthropy\src\Franthropy.Dalamud\Franthropy.Dalamud.csproj</FranthropyDalamudProject>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,7 +18,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="$(FranthropyDalamudProject)" />
+    <PackageReference Include="Franthropy.Dalamud" Version="[$(FranthropyPackageVersion)]" Condition="'$(FranthropySource)' == 'Package'" />
+    <ProjectReference Include="$(FranthropyRoot)/src/Franthropy.Dalamud/Franthropy.Dalamud.csproj" Condition="'$(FranthropySource)' == 'Local'" />
     <Compile Include="..\ComplicatedMarketBoard.Tests\RenderPathBoundaryTests.cs" Link="RenderPathBoundaryTests.cs" />
   </ItemGroup>
 

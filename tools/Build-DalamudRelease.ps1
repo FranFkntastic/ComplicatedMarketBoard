@@ -7,7 +7,7 @@ param(
 
     [string] $RepositoryUrl = "https://raw.githubusercontent.com/FranFkntastic/DalamudPlugins/main/pluginmaster.json",
 
-    [string] $FranthropyDalamudProject = "",
+    [string] $FranthropyFeed = (Join-Path $env:LOCALAPPDATA 'Franthropy/packages'),
 
     [string] $OutputDirectory = "",
 
@@ -25,8 +25,7 @@ $projectDir = Join-Path $repoRoot "ComplicatedMarketBoard"
 $projectPath = Join-Path $projectDir "ComplicatedMarketBoard.csproj"
 $pluginName = "ComplicatedMarketBoard"
 
-$dependency = & (Join-Path $PSScriptRoot 'Test-FranthropyDependency.ps1') -FranthropyDalamudProject $FranthropyDalamudProject | ConvertFrom-Json
-$FranthropyDalamudProject = $dependency.Project
+$dependency = & (Join-Path $PSScriptRoot 'Test-FranthropyDependency.ps1') -FranthropyFeed $FranthropyFeed | ConvertFrom-Json
 
 if ([string]::IsNullOrWhiteSpace($OutputDirectory)) {
     $OutputDirectory = Join-Path $repoRoot "dist"
@@ -57,9 +56,7 @@ if (-not $SkipBuild) {
         "-p:RestoreLockedMode=true",
         "-p:UseSharedCompilation=false"
     )
-    if (-not [string]::IsNullOrWhiteSpace($FranthropyDalamudProject)) {
-        $buildArgs += "-p:FranthropyDalamudProject=$FranthropyDalamudProject"
-    }
+    $buildArgs += "-p:FranthropyFeed=$FranthropyFeed"
 
     dotnet @buildArgs
     if ($LASTEXITCODE -ne 0) {
