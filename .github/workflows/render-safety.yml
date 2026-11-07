@@ -23,9 +23,10 @@ jobs:
         id: franthropy
         shell: pwsh
         run: |
-          $revision = (Get-Content -LiteralPath 'ComplicatedMarketBoard/Franthropy.commit' -Raw).Trim()
+          [xml]$pin = Get-Content 'ComplicatedMarketBoard/eng/Franthropy.Version.props'
+          $revision = ([string]$pin.Project.PropertyGroup.FranthropyPackageVersion).Replace('0.1.0-commit.', '')
           if ($revision -notmatch '^[0-9a-f]{40}$') {
-            throw "Franthropy.commit must contain one full lowercase Git commit."
+            throw 'Invalid Franthropy package pin.'
           }
           "revision=$revision" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
@@ -43,4 +44,4 @@ jobs:
 
       - name: Run render-path boundary tests
         working-directory: ComplicatedMarketBoard
-        run: dotnet test tests/ComplicatedMarketBoard.RenderSafety.Tests/ComplicatedMarketBoard.RenderSafety.Tests.csproj -c Debug
+        run: dotnet test tests/ComplicatedMarketBoard.RenderSafety.Tests/ComplicatedMarketBoard.RenderSafety.Tests.csproj -c Debug -p:FranthropySource=Local "-p:FranthropyRoot=$env:GITHUB_WORKSPACE/Franthropy"
