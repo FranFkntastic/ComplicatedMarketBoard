@@ -21,6 +21,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\ComplicatedMarketBoard\ComplicatedMarketBoard.csproj" />
+    <!-- Configuration enums require Dalamud in this SDK-dependent test host. -->
+    <Reference Include="Dalamud">
+      <HintPath Condition="'$(DALAMUD_HOME)' != ''">$(DALAMUD_HOME)/Dalamud.dll</HintPath>
+      <HintPath Condition="'$(DALAMUD_HOME)' == ''">$(APPDATA)/XIVLauncher/addon/Hooks/dev/Dalamud.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
 
 </Project>

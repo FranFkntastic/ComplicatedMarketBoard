@@ -14,7 +14,6 @@ public sealed class UniversalisClient
 {
     private const int MaxAttempts = 3;
     private const int AggregateMaxAttempts = 4;
-    private const int MaxConcurrentRequests = 3;
     private static readonly JsonSerializerOptions UniversalisJsonOptions = new(JsonSerializerDefaults.Web);
     private static readonly TimeSpan FreshDetailTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan FreshDetailRetryDelay = TimeSpan.FromSeconds(1);
@@ -28,7 +27,7 @@ public sealed class UniversalisClient
     private static readonly TimeSpan AggregateMaximumRetryDelay = TimeSpan.FromSeconds(1);
     private static readonly TimeSpan MinimumRequestStartInterval = TimeSpan.FromMilliseconds(200);
     private static readonly TimeSpan FailureCooldown = TimeSpan.FromSeconds(30);
-    private readonly SemaphoreSlim requestGate = new(MaxConcurrentRequests, MaxConcurrentRequests);
+    private readonly UniversalisRequestBudget requestBudget;
     private readonly SemaphoreSlim requestStartGate = new(1, 1);
     private readonly object retryStateLock = new();
     private readonly AsyncLocal<UniversalisFetchDiagnosticSession?> activeDiagnosticSession = new();
@@ -37,14 +36,15 @@ public sealed class UniversalisClient
 
     public UniversalisClient()
     {
+        requestBudget = new UniversalisRequestBudget(
+            () => P.Config.UniversalisMaxConcurrentRequests, requestStartGate.Dispose);
         httpClient = CreateHttpClient();
     }
 
     public void Dispose()
     {
         httpClient.Dispose();
-        requestGate.Dispose();
-        requestStartGate.Dispose();
+        requestBudget.Dispose();
     }
 
 
@@ -316,34 +316,52 @@ public sealed class UniversalisClient
             worldNames.Add(targetName);
 
         var scanStartedAt = Stopwatch.GetTimestamp();
+        var concurrency = requestBudget.Concurrency;
         TraceFetch(
             "aggregate-scan-started",
             targetName,
-            $"Scanning {worldNames.Count} worlds with concurrency {MaxConcurrentRequests} and {MinimumRequestStartInterval.TotalMilliseconds:F0}ms request spacing.");
+            $"Scanning {worldNames.Count} worlds with concurrency {concurrency} and {MinimumRequestStartInterval.TotalMilliseconds:F0}ms request spacing.");
         Service.Log.Info(
             $"[Universalis] Aggregate scan started for {targetName}: {worldNames.Count} worlds, " +
-            $"concurrency {MaxConcurrentRequests}, {MinimumRequestStartInterval.TotalMilliseconds:F0}ms request spacing.");
+            $"concurrency {concurrency}, {MinimumRequestStartInterval.TotalMilliseconds:F0}ms request spacing.");
 
         var worldProbes = new MarketFreshnessProbe?[worldNames.Count];
         var deferredWorlds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         UniversalisResponse? firstProbeFailure = null;
         var completedWorldCount = 0;
-        var pendingProbes = new List<Task<(int Index, string WorldName, MarketFreshnessProbe? Probe, UniversalisResponse? Failure)>>();
-        for (var worldIndex = 0; worldIndex < worldNames.Count; worldIndex++)
+        var freshDetailDeadline = DateTimeOffset.MaxValue;
+        var initial = await UniversalisInitialFetch.RunAsync(
+            () => GetListingDataForTarget(
+                gameItem, targetName, cancellationToken, reportProgress: null, vocabulary,
+                verificationPass: 1, requestProgress: GetFreshDetailProgress(FreshDetailTimeout)),
+            () => GetDataForTarget(
+                gameItem, targetName, cancellationToken, reportProgress: null, vocabulary,
+                listingLimitOverride: 0, entryLimitOverride: P.Config.UniversalisEntries),
+            StartWorldProbes);
+        var fetchedProbes = initial.Probes;
+
+        async Task<(int Index, string WorldName, MarketFreshnessProbe? Probe, UniversalisResponse? Failure)[]> StartWorldProbes()
         {
-            var worldName = worldNames[worldIndex];
-            if (worldProbeCache.TryGetValue(worldName, out var cachedProbe))
+            var pendingProbes = new List<Task<(int Index, string WorldName, MarketFreshnessProbe? Probe, UniversalisResponse? Failure)>>();
+            for (var worldIndex = 0; worldIndex < worldNames.Count; worldIndex++)
             {
-                worldProbes[worldIndex] = cachedProbe;
-                completedWorldCount++;
-                continue;
+                var worldName = worldNames[worldIndex];
+                if (worldProbeCache.TryGetValue(worldName, out var cachedProbe))
+                {
+                    worldProbes[worldIndex] = cachedProbe;
+                    Interlocked.Increment(ref completedWorldCount);
+                    continue;
+                }
+
+                var capturedIndex = worldIndex;
+                pendingProbes.Add(FetchWorldProbeAsync(capturedIndex, worldName));
             }
 
-            var capturedIndex = worldIndex;
-            pendingProbes.Add(FetchWorldProbeAsync(capturedIndex, worldName));
+            var results = await Task.WhenAll(pendingProbes);
+            // Keep the original repair deadline anchored to aggregate completion.
+            freshDetailDeadline = DateTimeOffset.UtcNow + FreshDetailTimeout;
+            return results;
         }
-
-        var fetchedProbes = await Task.WhenAll(pendingProbes);
         foreach (var result in fetchedProbes.OrderBy(result => result.Index))
         {
             if (result.Failure is not null)
@@ -377,34 +395,17 @@ public sealed class UniversalisClient
             };
         }
         Service.Log.Info(
-            $"[Universalis] Aggregate scan completed for {targetName}: {resolvedWorldProbes.Length} worlds in " +
+            $"[Universalis] Initial detail/history/aggregate fetch completed for {targetName}: {resolvedWorldProbes.Length} worlds in " +
             $"{Stopwatch.GetElapsedTime(scanStartedAt).TotalSeconds:F2}s.");
         TraceFetch(
-            "aggregate-scan-completed",
+            "initial-fetch-completed",
             targetName,
             $"Resolved freshness probes for {resolvedWorldProbes.Length} worlds; deferred {deferredWorlds.Count}.",
             durationMilliseconds: Stopwatch.GetElapsedTime(scanStartedAt).TotalMilliseconds);
 
-        var deadline = DateTimeOffset.UtcNow + FreshDetailTimeout;
-        var detailedTask = GetListingDataForTarget(
-            gameItem,
-            targetName,
-            cancellationToken,
-            reportProgress,
-            vocabulary,
-            verificationPass: 1,
-            requestProgress: GetFreshDetailProgress(FreshDetailTimeout));
-        var historyTask = GetDataForTarget(
-            gameItem,
-            targetName,
-            cancellationToken,
-            reportProgress: null,
-            vocabulary,
-            listingLimitOverride: 0,
-            entryLimitOverride: P.Config.UniversalisEntries);
-        await Task.WhenAll(detailedTask, historyTask);
-        var detailed = await detailedTask;
-        var history = await historyTask;
+        var deadline = freshDetailDeadline;
+        var detailed = initial.Listings;
+        var history = initial.History;
         if (detailed.Status != UniversalisResponseStatus.Success)
             return detailed;
         if (history.Status != UniversalisResponseStatus.Success)
@@ -1609,24 +1610,17 @@ public sealed class UniversalisClient
         Action<UniversalisRequestProgress>? reportProgress,
         CancellationToken cancellationToken)
     {
-        await requestGate.WaitAsync(cancellationToken);
-        try
-        {
-            await WaitForSharedCooldownAsync(
-                targetName,
-                progress,
-                reportProgress,
-                cancellationToken);
-            await WaitForRequestStartSlotAsync(cancellationToken);
+        using var lease = await requestBudget.EnterAsync(cancellationToken);
+        await WaitForSharedCooldownAsync(
+            targetName,
+            progress,
+            reportProgress,
+            cancellationToken);
+        await WaitForRequestStartSlotAsync(cancellationToken);
 
-            using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-            requestTimeout.CancelAfter(timeout);
-            return await httpClient.SendAsync(request, requestTimeout.Token);
-        }
-        finally
-        {
-            requestGate.Release();
-        }
+        using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        requestTimeout.CancelAfter(timeout);
+        return await httpClient.SendAsync(request, requestTimeout.Token);
     }
 
     private async Task WaitForRequestStartSlotAsync(CancellationToken cancellationToken)

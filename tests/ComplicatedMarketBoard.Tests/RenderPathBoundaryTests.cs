@@ -5,6 +5,20 @@ namespace ComplicatedMarketBoard.Tests;
 public sealed class RenderPathBoundaryTests
 {
     [Fact]
+    public void ConcurrentRequestControlPersistsWithoutReplacingTheHttpClient()
+    {
+        var source = ReadSource("ComplicatedMarketBoard", "Windows", "ConfigWindow.cs");
+        var start = source.IndexOf("var concurrentRequests =", StringComparison.Ordinal);
+        var end = source.IndexOf("// UniversalisListings", start, StringComparison.Ordinal);
+        var control = source[start..end];
+        Assert.Contains("UniversalisRequestBudget.MinimumConcurrency", control);
+        Assert.Contains("UniversalisRequestBudget.MaximumConcurrency", control);
+        Assert.Contains("P.Config.Save()", control);
+        Assert.DoesNotContain("ReloadHttpClient", control);
+        Assert.Contains("table_height * 4", ExtractMethodBody(source, "DrawData"));
+    }
+
+    [Fact]
     public void DrawMethodsDoNotPerformBlockingOrNetworkWork()
     {
         var sourceDirectory = Path.Combine(FindRepositoryRoot(), "ComplicatedMarketBoard");
