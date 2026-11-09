@@ -69,7 +69,7 @@ public partial class MainWindow
 
         var fetchedAgo = FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - response.FetchTime);
         if (response.ProvisionalWorlds.Count > 0)
-            return $"{Market.MarketProvisionalListingPolicy.Summary(response)}; ~ marks provisional prices";
+            return $"{RefreshStatusText}; ~ provisional / ! uncorroborated";
         var summary = string.IsNullOrWhiteSpace(RefreshStatusText)
             ? "Market data refreshed"
             : RefreshStatusText;
@@ -113,7 +113,8 @@ public partial class MainWindow
         var response = CurrentItem.UniversalisResponse;
         var confidence = response.ProvisionalWorlds.Count > 0
             ? $"Provisional worlds: {string.Join(", ", response.ProvisionalWorlds.Keys)}\n" +
-              "~ prices are exact returned rows, not yet corroborated. Price or availability may have changed.\n" +
+              "~ marks recent provisional prices; ! means the upload window elapsed without corroboration.\n" +
+              "These are exact returned rows; price or availability may have changed.\n" +
               "CMB rechecks automatically; the cheapest result may be provisional.\n"
             : "";
         var listingCoverage = response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited

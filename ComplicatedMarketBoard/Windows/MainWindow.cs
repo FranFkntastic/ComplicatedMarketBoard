@@ -1168,7 +1168,7 @@ public partial class MainWindow : Window, IDisposable
         // Selling
         var response = CurrentItem.UniversalisResponse;
         response.ProvisionalWorlds.TryGetValue(listing.WorldName, out var provisional);
-        var selling = $"{listing.PricePerUnit}{(provisional is not null ? " ~" : "")}";
+        var selling = $"{listing.PricePerUnit}{(provisional is not null ? (provisional.EligibilityExpired ? " !" : " ~") : "")}";
         ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
         if (P.Config.NumbersAlignRight)
         {

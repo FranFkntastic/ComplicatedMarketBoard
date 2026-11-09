@@ -8,6 +8,36 @@ public sealed class MarketProvisionalListingPolicyTests
     private const long Now = 1_800_000_000_000;
 
     [Fact]
+    public void FailedSingleWorldRecheckExpiresDisplayedQualificationWithoutPromotingOrDiscardingRows()
+    {
+        var row = new MarketDataListing { ListingId = "last-observation", WorldName = "Siren", PricePerUnit = 100 };
+        var displayed = new UniversalisResponse
+        {
+            Status = UniversalisResponseStatus.Success, ScopeName = "Siren", FetchTime = Now,
+            Listings = [row], WorldUploadTimes = new() { ["Siren"] = Now - 2_000 },
+            ProvisionalWorlds = new() { ["Siren"] = new(Now, Now - 2_000) },
+        };
+        // StaleData/transport failure supplies no replacement: the displayed response must age independently.
+        Assert.False(MarketProvisionalListingPolicy.ExpireDisplayedQualifications(displayed, Now + 300_000));
+        Assert.True(MarketProvisionalListingPolicy.ExpireDisplayedQualifications(displayed, Now + 300_001));
+        Assert.True(displayed.ProvisionalWorlds["Siren"].EligibilityExpired);
+        Assert.Contains("upload window elapsed", MarketProvisionalListingPolicy.Summary(displayed));
+        Assert.Contains("Uncorroborated", displayed.ProvisionalWorlds["Siren"].Explanation);
+        Assert.Same(row, Assert.Single(displayed.Listings));
+        Assert.Equal(Now, displayed.FetchTime);
+        Assert.Empty(MarketProvisionalListingPolicy.ReconciliationFences(displayed, "Siren"));
+        Assert.False(MarketProvisionalListingPolicy.ExpireDisplayedQualifications(displayed, Now + 600_000));
+        Assert.Equal(TimeSpan.FromSeconds(30), MarketProvisionalListingPolicy.NextRecheckDelay(displayed, Now + 600_000));
+    }
+
+    [Fact]
+    public void RecheckWakesAtQualificationDeadlineRatherThanLeavingThirtySecondGracePeriod()
+    {
+        var displayed = new UniversalisResponse { ProvisionalWorlds = new() { ["Siren"] = new(Now, Now - 2_000) } };
+        Assert.Equal(TimeSpan.FromMilliseconds(11), MarketProvisionalListingPolicy.NextRecheckDelay(displayed, Now + 299_990));
+    }
+
+    [Fact]
     public void BackgroundRechecksOnlyUnresolvedWorldsAndNeverReusesOtherScopeFences()
     {
         var response = new UniversalisResponse

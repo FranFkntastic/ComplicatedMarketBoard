@@ -6,6 +6,30 @@ public static class MarketProvisionalListingPolicy
 {
     public static readonly TimeSpan RecentUploadWindow = TimeSpan.FromMinutes(5);
 
+    public static bool ExpireDisplayedQualifications(UniversalisResponse response, long nowUtcMs)
+    {
+        var changed = false;
+        foreach (var pair in response.ProvisionalWorlds.ToArray())
+        {
+            if (pair.Value.EligibilityExpired
+                || nowUtcMs - pair.Value.AggregateUploadTime <= RecentUploadWindow.TotalMilliseconds)
+                continue;
+            response.ProvisionalWorlds[pair.Key] = pair.Value with { EligibilityExpired = true };
+            changed = true;
+        }
+        return changed;
+    }
+
+    public static TimeSpan NextRecheckDelay(UniversalisResponse response, long nowUtcMs)
+    {
+        var delayMs = 30_000L;
+        foreach (var partition in response.ProvisionalWorlds.Values)
+            if (!partition.EligibilityExpired)
+                delayMs = Math.Min(delayMs, Math.Max(1,
+                    partition.AggregateUploadTime + (long)RecentUploadWindow.TotalMilliseconds + 1 - nowUtcMs));
+        return TimeSpan.FromMilliseconds(delayMs);
+    }
+
     public static Dictionary<string, MarketFreshnessProbe> ReconciliationFences(UniversalisResponse previous, string requestedScope)
     {
         var cache = new Dictionary<string, MarketFreshnessProbe>(StringComparer.OrdinalIgnoreCase);
@@ -41,9 +65,13 @@ public static class MarketProvisionalListingPolicy
     }
 
     public static string Summary(UniversalisResponse response)
-        => $"Results available; {response.ProvisionalWorlds.Count} world(s) awaiting corroboration" +
+    {
+        var expired = response.ProvisionalWorlds.Values.Count(partition => partition.EligibilityExpired);
+        return $"Results available; {response.ProvisionalWorlds.Count - expired} recent world(s) awaiting corroboration" +
+           (expired > 0 ? $"; {expired} world(s) uncorroborated (upload window elapsed)" : "") +
            (response.DeferredWorlds.Count > 0 ? $"; {response.DeferredWorlds.Count} world(s) deferred" : "") +
            (response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited
                ? $"; showing {response.Listings.Count} of {response.RequestedListingCount} requested listings"
                : "");
+    }
 }

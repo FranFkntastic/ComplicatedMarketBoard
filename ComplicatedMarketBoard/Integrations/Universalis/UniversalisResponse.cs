@@ -180,7 +180,11 @@ public sealed record DeferredWorldPartition(
 
 public sealed record ProvisionalWorldPartition(long AggregateUploadTime, long DetailedUploadTime)
 {
-    public string Explanation => "Newer upload detected; listing details catching up. " +
+    public bool EligibilityExpired { get; init; }
+
+    public string Explanation => (EligibilityExpired
+        ? "Uncorroborated: the recent-upload window elapsed without confirmation. "
+        : "Newer upload detected; listing details catching up. ") +
         "This exact listing was returned by Universalis, but its price or availability may have changed. " +
         "It is not yet corroborated; CMB rechecks automatically.";
 }
