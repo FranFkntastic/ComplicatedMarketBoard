@@ -75,6 +75,12 @@ public class UniversalisResponse
     /// </summary>
     public Dictionary<string, DeferredWorldPartition> DeferredWorlds { get; set; } = [];
 
+    public Dictionary<string, ProvisionalWorldPartition> ProvisionalWorlds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    // Comparison fences belong to this search, not a persisted claim of current market state.
+    [JsonIgnore]
+    public IReadOnlyList<ComplicatedMarketBoard.Market.MarketFreshnessProbe> VerificationProbes { get; set; } = [];
+
     /// <summary>
     /// Gets the total amount of items currently for sale.
     /// </summary>
@@ -171,3 +177,14 @@ public sealed record DeferredWorldPartition(
     string Reason,
     bool RetainedPreviousPartition,
     long RetainedUploadTime = 0);
+
+public sealed record ProvisionalWorldPartition(long AggregateUploadTime, long DetailedUploadTime)
+{
+    public bool EligibilityExpired { get; init; }
+
+    public string Explanation => (EligibilityExpired
+        ? "Uncorroborated: the recent-upload window elapsed without confirmation. "
+        : "Newer upload detected; listing details catching up. ") +
+        "This exact listing was returned by Universalis, but its price or availability may have changed. " +
+        "It is not yet corroborated; CMB rechecks automatically.";
+}

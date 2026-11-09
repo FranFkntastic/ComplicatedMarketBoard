@@ -34,7 +34,7 @@ public sealed class MarketRefreshService
         Service.Log.Debug($"[MarketRefresh] Start item lookup: {itemId}");
         var requestedScope = P.MainWindow.GetSelectedMarketScopeLabel();
         var request = requestCoordinator.BeginSuperseding(
-            new MarketRefreshRequestKey(itemId, requestedScope, RequireCurrentDetails: false));
+            new MarketRefreshRequestKey(itemId, requestedScope, RequireCurrentDetails: true));
 
         Task.Run(async () =>
         {
@@ -76,6 +76,7 @@ public sealed class MarketRefreshService
                 P.MainWindow.ShowCachedMarketData(cached_gameItem.Name);
                 P.MainWindow.CurrentItemUpdate(cached_gameItem);
             }
+            await CheckGameItemAsync(request, cached_gameItem, requestedScope, requireCurrentDetails: true);
             return;
         }
 
@@ -103,7 +104,7 @@ public sealed class MarketRefreshService
             gameItem.VendorSelling = gameItem.InGame.PriceMid;
         }
 
-        await CheckGameItemAsync(request, gameItem, requestedScope, requireCurrentDetails: false);
+        await CheckGameItemAsync(request, gameItem, requestedScope, requireCurrentDetails: true);
     }
 
     public void DoCheckRefreshAsync(MarketItem gameItem)
@@ -211,13 +212,18 @@ public sealed class MarketRefreshService
         gameItem.WorldOutOfDate = universalisResponse.WorldOutOfDate;
         gameItem.AvgPrice = universalisResponse.AveragePrice;
 
-        if (P.Config.EnableChatLog) SendChatMessage(gameItem);
-        if (P.Config.EnableToastLog) SendToast(gameItem);
+        if (universalisResponse.ProvisionalWorlds.Count == 0)
+        {
+            if (P.Config.EnableChatLog) SendChatMessage(gameItem);
+            if (P.Config.EnableToastLog) SendToast(gameItem);
+        }
 
         P.MainWindow.CurrentItemUpdate(gameItem);
         SearchHistoryUpdate(gameItem);
         var duplicateLimited = universalisResponse.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited;
-        var completionText = universalisResponse.DeferredWorlds.Count > 0 || duplicateLimited
+        var completionText = universalisResponse.ProvisionalWorlds.Count > 0
+            ? MarketProvisionalListingPolicy.Summary(universalisResponse)
+            : universalisResponse.DeferredWorlds.Count > 0 || duplicateLimited
             ? vocabulary.PartiallyConfirmed(
                 gameItem.Name,
                 universalisResponse.DeferredWorlds.Keys.ToArray(),
@@ -228,6 +234,78 @@ public sealed class MarketRefreshService
         P.MainWindow.CompleteMarketDataRefresh(
             gameItem.Name,
             completionText);
+        await ReconcileProvisionalAsync(request, gameItem, vocabulary);
+    }
+
+    private async Task ReconcileProvisionalAsync(
+        MarketRefreshRequestContext request,
+        MarketItem gameItem,
+        MarketRefreshVocabulary vocabulary)
+    {
+        request.IsReconciling = true;
+        while (gameItem.UniversalisResponse.ProvisionalWorlds.Count > 0)
+        {
+            await Task.Delay(MarketProvisionalListingPolicy.NextRecheckDelay(
+                gameItem.UniversalisResponse, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), request.Cancellation.Token);
+            if (!requestCoordinator.IsCurrent(request))
+                return;
+            ExpireDisplayedQualifications();
+
+            UniversalisResponse response;
+            using var recheck = CancellationTokenSource.CreateLinkedTokenSource(request.Cancellation.Token);
+            recheck.CancelAfter(MarketProvisionalListingPolicy.NextRecheckDelay(
+                gameItem.UniversalisResponse, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+            try
+            {
+                response = await P.Universalis.GetDataAsync(
+                    gameItem, recheck.Token, requireCurrentDetails: true,
+                    vocabulary: vocabulary, reconcileProvisionalOnly: true);
+            }
+            catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { throw; }
+            catch (OperationCanceledException)
+            {
+                ExpireDisplayedQualifications();
+                continue;
+            }
+            catch (Exception exception)
+            {
+                Service.Log.Warning(exception, "[MarketRefresh] Background corroboration failed; preserving qualified results and retrying.");
+                continue;
+            }
+            request.Cancellation.Token.ThrowIfCancellationRequested();
+            if (!requestCoordinator.IsCurrent(request))
+                return;
+            ExpireDisplayedQualifications();
+            if (response.Status != UniversalisResponseStatus.Success)
+            {
+                Service.Log.Warning($"[MarketRefresh] Background corroboration unavailable: {GetUniversalisFailureText(response)}; retrying automatically.");
+                continue;
+            }
+
+            MarketProvisionalListingPolicy.ExpireDisplayedQualifications(response, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            gameItem.UniversalisResponse = response;
+            gameItem.WorldOutOfDate = response.WorldOutOfDate;
+            gameItem.AvgPrice = response.AveragePrice;
+            P.MainWindow.CurrentItemUpdate(gameItem);
+            P.MainWindow.CompleteMarketDataRefresh(gameItem.Name,
+                response.ProvisionalWorlds.Count > 0
+                    ? MarketProvisionalListingPolicy.Summary(response)
+                    : vocabulary.PartiallyConfirmed(gameItem.Name, response.DeferredWorlds.Keys.ToArray(),
+                        response.Listings.Count, response.RequestedListingCount,
+                        response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited));
+            Service.Log.Info($"[MarketRefresh] Background corroboration: {response.ProvisionalWorlds.Count} provisional, {response.DeferredWorlds.Count} deferred world(s).");
+        }
+
+        void ExpireDisplayedQualifications()
+        {
+            if (!requestCoordinator.IsCurrent(request)
+                || !MarketProvisionalListingPolicy.ExpireDisplayedQualifications(
+                    gameItem.UniversalisResponse, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
+                return;
+            P.MainWindow.CurrentItemUpdate(gameItem);
+            P.MainWindow.CompleteMarketDataRefresh(gameItem.Name,
+                MarketProvisionalListingPolicy.Summary(gameItem.UniversalisResponse));
+        }
     }
 
     private static string GetUniversalisFailureText(UniversalisResponse response)

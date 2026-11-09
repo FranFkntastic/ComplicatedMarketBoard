@@ -5,6 +5,20 @@ namespace ComplicatedMarketBoard.Tests;
 public sealed class MarketRefreshRequestCoordinatorTests
 {
     [Fact]
+    public void ManualRefreshSupersedesBackgroundReconciliationEvenForSameKey()
+    {
+        using var coordinator = new MarketRefreshRequestCoordinator();
+        var key = new MarketRefreshRequestKey(22528, "Siren", RequireCurrentDetails: true);
+        var first = coordinator.BeginSuperseding(key);
+        first.IsReconciling = true;
+        var second = Assert.IsType<MarketRefreshRequestContext>(coordinator.TryBeginCoalesced(key));
+        Assert.True(first.Cancellation.IsCancellationRequested);
+        coordinator.End(first);
+        Assert.True(coordinator.IsCurrent(second));
+        coordinator.End(second);
+    }
+
+    [Fact]
     public void SameItemAndScope_CoalescesWithoutCancellingActiveRefresh()
     {
         using var coordinator = new MarketRefreshRequestCoordinator();

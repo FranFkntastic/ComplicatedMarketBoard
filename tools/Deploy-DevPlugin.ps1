@@ -15,6 +15,8 @@ param(
 
     [string]$DabPath,
 
+    [int]$ProcessId,
+
     [ValidateRange(1, 120)]
     [int]$TimeoutSeconds = 30
 )
@@ -86,7 +88,9 @@ function Resolve-DabPath {
 function Get-CmbCatalogEntry {
     param([Parameter(Mandatory = $true)][string]$Executable)
 
-    $json = & $Executable plugins --profile $dabProfile | Out-String
+    $selector = @('--profile', $dabProfile)
+    if ($ProcessId -gt 0) { $selector += @('--pid', "$ProcessId") }
+    $json = & $Executable plugins @selector | Out-String
     if ($LASTEXITCODE -ne 0) {
         throw "DAB could not read the $Profile plugin catalog."
     }
@@ -254,15 +258,22 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and -not $commit.StartsW
 }
 
 $dependency = & (Join-Path $PSScriptRoot 'Test-FranthropyDependency.ps1') -FranthropyDalamudProject $FranthropyDalamudProject | ConvertFrom-Json
-$franthropy = $dependency.Root
-$FranthropyDalamudProject = $dependency.Project
+$franthropy = Join-Path $workspace 'Franthropy'
+$dependencyDirty = & git -C $franthropy status --porcelain=v1 --untracked-files=all
+if ($LASTEXITCODE -ne 0 -or $dependencyDirty) {
+    throw 'Franthropy checkout must be available and clean before deployment.'
+}
 & git -C $franthropy merge-base --is-ancestor HEAD origin/main
 if ($LASTEXITCODE -ne 0) {
     throw "Franthropy HEAD is not published on origin/main."
 }
+& git -C $franthropy merge-base --is-ancestor $dependency.Commit origin/main
+if ($LASTEXITCODE -ne 0) { throw 'Pinned Franthropy package commit is not published on origin/main.' }
 
 $registeredDll = Get-RegisteredDllPath
-$expectedRegisteredDll = if ($Profile -eq 'Primary') {
+$usesSourceOutput = $Profile -eq 'Primary' -and [string]::Equals(
+    [System.IO.Path]::GetFullPath($sourceDll), $registeredDll, [StringComparison]::OrdinalIgnoreCase)
+$expectedRegisteredDll = if ($usesSourceOutput) {
     [System.IO.Path]::GetFullPath($sourceDll)
 }
 else {
@@ -280,13 +291,13 @@ if (-not $before.isLoaded -or -not $before.isDev) {
 
 $buildDirectory = $sourceDirectory
 $temporaryBuildRoot = $null
-if ($Profile -ne 'Primary') {
+if (-not $usesSourceOutput) {
     $temporaryBuildRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cmb-staged-$([Guid]::NewGuid().ToString('N'))"
     $buildDirectory = Join-Path $temporaryBuildRoot 'output'
 }
 
-$buildArguments = @('build', $project, '-c', 'Debug', '--no-incremental', '-p:RestoreLockedMode=true', "-p:FranthropyDalamudProject=$FranthropyDalamudProject")
-if ($Profile -ne 'Primary') {
+$buildArguments = @('build', $project, '-c', 'Debug', '--no-incremental', '-p:RestoreLockedMode=true')
+if (-not $usesSourceOutput) {
     $buildArguments += "-p:OutputPath=$buildDirectory"
 }
 & dotnet @buildArguments
@@ -311,7 +322,7 @@ $deploymentReceipt = $null
 $deploymentBackupRoot = $null
 $deploymentTargetDirectory = $null
 $deploymentOriginalFiles = @()
-if ($Profile -ne 'Primary') {
+if (-not $usesSourceOutput) {
     try {
         $deploymentTargetDirectory = [System.IO.Path]::GetDirectoryName($registeredDll)
         $deploymentBackupRoot = Join-Path ([System.IO.Path]::GetTempPath()) "cmb-staged-backup-$([Guid]::NewGuid().ToString('N'))"
@@ -364,14 +375,14 @@ do {
 } while ([DateTimeOffset]::UtcNow -lt $deadline)
 
 if ($null -eq $after) {
-    if ($Profile -ne 'Primary') {
+    if (-not $usesSourceOutput) {
         Restore-DirectoryBackup -Backup $deploymentBackupRoot -Destination $deploymentTargetDirectory -OriginalFiles $deploymentOriginalFiles
         Remove-TemporaryBuildRoot $deploymentBackupRoot
     }
     throw "$Profile did not advertise the expected CMB commit '$commit' before the deployment timeout."
 }
 
-if ($Profile -ne 'Primary') {
+if (-not $usesSourceOutput) {
     $loadedDestinationHash = (Get-FileHash -LiteralPath $registeredDll -Algorithm SHA256).Hash
     if (-not [string]::Equals($loadedDestinationHash, $sourceHash, [StringComparison]::OrdinalIgnoreCase)) {
         Restore-DirectoryBackup -Backup $deploymentBackupRoot -Destination $deploymentTargetDirectory -OriginalFiles $deploymentOriginalFiles
