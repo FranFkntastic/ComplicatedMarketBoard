@@ -1097,6 +1097,7 @@ public sealed class UniversalisClient
         var mergedWorldUploadTimes = new Dictionary<string, long>();
         var mergedDeferredWorlds = new Dictionary<string, DeferredWorldPartition>(StringComparer.OrdinalIgnoreCase);
         var mergedProvisionalWorlds = new Dictionary<string, ProvisionalWorldPartition>(StringComparer.OrdinalIgnoreCase);
+        var worldsWithoutListingData = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var response in responses)
         {
@@ -1116,6 +1117,7 @@ public sealed class UniversalisClient
                 mergedDeferredWorlds[deferred.Key] = deferred.Value;
             foreach (var provisional in response.ProvisionalWorlds)
                 mergedProvisionalWorlds[provisional.Key] = provisional.Value;
+            worldsWithoutListingData.UnionWith(response.WorldsWithoutListingData);
         }
 
         var duplicateLimited = responses.Any(response =>
@@ -1138,6 +1140,7 @@ public sealed class UniversalisClient
             WorldUploadTimes = mergedWorldUploadTimes,
             DeferredWorlds = mergedDeferredWorlds,
             ProvisionalWorlds = mergedProvisionalWorlds,
+            WorldsWithoutListingData = worldsWithoutListingData,
             VerificationProbes = responses.SelectMany(response => response.VerificationProbes).ToArray(),
             RawListingCount = responses.Sum(response => response.RawListingCount),
             ListingRequestLimit = responses.Sum(response => response.ListingRequestLimit),
@@ -1437,6 +1440,13 @@ public sealed class UniversalisClient
                         Service.Log.Warning($"[Universalis] Parse JSON failed");
                         return new UniversalisResponse { Status = UniversalisResponseStatus.InvalidData, FailureDetail = "Universalis returned no market data." };
                     }
+
+                    if (MarketListingDataPolicy.HasContradictoryDataFlag(data))
+                        return new UniversalisResponse
+                        {
+                            Status = UniversalisResponseStatus.InvalidData,
+                            FailureDetail = "Universalis marked listing data unavailable but returned listing rows.",
+                        };
 
                     var interpretedResponse = BuildSuccessResponse(
                         data,
@@ -1830,7 +1840,8 @@ public sealed class UniversalisClient
         }
         else
         {
-            worldUpdatedData.Add(targetName, (fetchTime - data.LastUploadTime) / 1000d / 3600d);
+            if (data.LastUploadTime > 0)
+                worldUpdatedData.Add(targetName, (fetchTime - data.LastUploadTime) / 1000d / 3600d);
             worldUploadTimes.Add(targetName, data.LastUploadTime);
             foreach (var listing in data.Listings)
             {
@@ -1850,6 +1861,10 @@ public sealed class UniversalisClient
         {
             Status = UniversalisResponseStatus.Success,
             ItemId = data.ItemId,
+            HasData = data.HasData,
+            WorldsWithoutListingData = data.HasData == false && data.Listings.Count == 0
+                ? new(StringComparer.OrdinalIgnoreCase) { targetName }
+                : new(StringComparer.OrdinalIgnoreCase),
             IsCrossWorld = data.WorldUploadTimes.Count > 0,
             WorldOutOfDate = worldUpdatedData,
             FetchTime = fetchTime,

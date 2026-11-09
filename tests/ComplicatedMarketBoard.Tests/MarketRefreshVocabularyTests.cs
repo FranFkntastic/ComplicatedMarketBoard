@@ -60,7 +60,7 @@ public sealed class MarketRefreshVocabularyTests
     public void PartialConfirmationNamesSmallDeferredSet()
     {
         Assert.Equal(
-            "Latest listings confirmed for Potion; Siren still pending",
+            "Latest listings confirmed for Potion; Siren not corroborated",
             MarketRefreshVocabulary.Standard.PartiallyConfirmed("Potion", ["Siren"]));
     }
 
@@ -81,7 +81,7 @@ public sealed class MarketRefreshVocabularyTests
     public void PartialConfirmationComposesCoverageAndDeferredWorlds()
     {
         Assert.Equal(
-            "Latest listings confirmed for Potion; showing 22 of 70 requested listings; Siren still pending",
+            "Latest listings confirmed for Potion; showing 22 of 70 requested listings; Siren not corroborated",
             MarketRefreshVocabulary.Standard.PartiallyConfirmed(
                 "Potion",
                 ["Siren"],

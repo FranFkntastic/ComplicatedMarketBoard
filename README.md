@@ -1,5 +1,7 @@
 # ComplicatedMarketBoard
 
+Worlds where neither Universalis projection reports listings no longer trigger timestamp-only repair passes. Missing listing data is shown separately from an observed empty market or a request failure; an uncorroborated world is not described as a request still running.
+
 Recent uploads can temporarily disagree between Universalis's price summaries and detailed listings. CMB includes eligible exact listing rows with a `~` beside the price and an “awaiting corroboration” summary, then rechecks automatically. If the five-minute upload window elapses without corroboration, retained observations show `!` and explicitly remain uncorroborated, even when rechecks fail. Hover a marked price for details: its price or availability may have changed, and it is not a confirmed regional bargain. Same-revision contradictions and conflicting copies of a listing are not treated as ordinary upload delay.
 
 ComplicatedMarketBoard is a compact Dalamud market board helper for FFXIV.

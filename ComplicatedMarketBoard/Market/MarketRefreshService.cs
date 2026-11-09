@@ -212,7 +212,9 @@ public sealed class MarketRefreshService
         gameItem.WorldOutOfDate = universalisResponse.WorldOutOfDate;
         gameItem.AvgPrice = universalisResponse.AveragePrice;
 
-        if (universalisResponse.ProvisionalWorlds.Count == 0)
+        if (universalisResponse.ProvisionalWorlds.Count == 0
+            && universalisResponse.WorldsWithoutListingData.Count == 0
+            && universalisResponse.Listings.Count > 0)
         {
             if (P.Config.EnableChatLog) SendChatMessage(gameItem);
             if (P.Config.EnableToastLog) SendToast(gameItem);
@@ -223,14 +225,15 @@ public sealed class MarketRefreshService
         var duplicateLimited = universalisResponse.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited;
         var completionText = universalisResponse.ProvisionalWorlds.Count > 0
             ? MarketProvisionalListingPolicy.Summary(universalisResponse)
-            : universalisResponse.DeferredWorlds.Count > 0 || duplicateLimited
+            : MarketListingDataPolicy.CompletionSummary(universalisResponse, gameItem.Name)
+              ?? (universalisResponse.DeferredWorlds.Count > 0 || duplicateLimited
             ? vocabulary.PartiallyConfirmed(
                 gameItem.Name,
                 universalisResponse.DeferredWorlds.Keys.ToArray(),
                 universalisResponse.Listings.Count,
                 universalisResponse.RequestedListingCount,
                 duplicateLimited)
-            : vocabulary.Confirmed(gameItem.Name);
+            : vocabulary.Confirmed(gameItem.Name));
         P.MainWindow.CompleteMarketDataRefresh(
             gameItem.Name,
             completionText);
@@ -290,7 +293,8 @@ public sealed class MarketRefreshService
             P.MainWindow.CompleteMarketDataRefresh(gameItem.Name,
                 response.ProvisionalWorlds.Count > 0
                     ? MarketProvisionalListingPolicy.Summary(response)
-                    : vocabulary.PartiallyConfirmed(gameItem.Name, response.DeferredWorlds.Keys.ToArray(),
+                    : MarketListingDataPolicy.CompletionSummary(response, gameItem.Name)
+                      ?? vocabulary.PartiallyConfirmed(gameItem.Name, response.DeferredWorlds.Keys.ToArray(),
                         response.Listings.Count, response.RequestedListingCount,
                         response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited));
             Service.Log.Info($"[MarketRefresh] Background corroboration: {response.ProvisionalWorlds.Count} provisional, {response.DeferredWorlds.Count} deferred world(s).");
