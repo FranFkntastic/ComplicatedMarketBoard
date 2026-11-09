@@ -75,6 +75,10 @@ public class UniversalisResponse
     /// </summary>
     public Dictionary<string, DeferredWorldPartition> DeferredWorlds { get; set; } = [];
 
+    public bool? HasData { get; set; }
+
+    public HashSet<string> WorldsWithoutListingData { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
     public Dictionary<string, ProvisionalWorldPartition> ProvisionalWorlds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     // Comparison fences belong to this search, not a persisted claim of current market state.

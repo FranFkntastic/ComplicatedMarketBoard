@@ -23,6 +23,9 @@ public class MarketDataCurrent
     [JsonPropertyName("lastUploadTime")]
     public long LastUploadTime { get; set; }
 
+    [JsonPropertyName("hasData")]
+    public bool? HasData { get; set; }
+
     /// <summary>
     /// Gets or sets the listings.
     /// </summary>

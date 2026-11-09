@@ -209,11 +209,8 @@ public static class MarketFreshnessMatcher
         if (expected is null)
         {
             if (actual is null)
-                return CompareUploadRevision(
-                    aggregateUploadTime,
-                    detailedUploadTime,
-                    probe.TargetName,
-                    qualityLabel);
+                // A revision difference cannot contradict listing content that neither source reports.
+                return MarketFreshnessMatch.Current();
 
             return ResolveContentDisagreement(
                 probe.TargetName,

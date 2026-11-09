@@ -21,6 +21,8 @@ public static class MarketWorldPartitionPolicy
         IReadOnlyDictionary<string, string> deferredWorlds,
         long? nowUtcMs = null)
     {
+        MarketListingDataPolicy.ClassifyWorlds(
+            worldProbes.Where(probe => !deferredWorlds.ContainsKey(probe.TargetName)).ToArray(), detailed, hqOnly);
         var fullMatch = MarketFreshnessMatcher.CompareScope(
             worldProbes.Where(probe => !deferredWorlds.ContainsKey(probe.TargetName)).ToArray(),
             detailed, hqOnly, listingLimit);

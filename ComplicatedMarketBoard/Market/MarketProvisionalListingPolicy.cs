@@ -37,7 +37,8 @@ public static class MarketProvisionalListingPolicy
             return cache;
         foreach (var probe in previous.VerificationProbes)
             if (!previous.ProvisionalWorlds.ContainsKey(probe.TargetName)
-                && !previous.DeferredWorlds.ContainsKey(probe.TargetName))
+                && !previous.DeferredWorlds.ContainsKey(probe.TargetName)
+                && !previous.WorldsWithoutListingData.Contains(probe.TargetName))
                 cache[probe.TargetName] = probe;
         return cache;
     }
@@ -68,6 +69,7 @@ public static class MarketProvisionalListingPolicy
     {
         var expired = response.ProvisionalWorlds.Values.Count(partition => partition.EligibilityExpired);
         return $"Results available; {response.ProvisionalWorlds.Count - expired} recent world(s) awaiting corroboration" +
+           (response.WorldsWithoutListingData.Count > 0 ? $"; {MarketListingDataPolicy.DescribeUnavailable(response)}" : "") +
            (expired > 0 ? $"; {expired} world(s) uncorroborated (upload window elapsed)" : "") +
            (response.DeferredWorlds.Count > 0 ? $"; {response.DeferredWorlds.Count} world(s) deferred" : "") +
            (response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited

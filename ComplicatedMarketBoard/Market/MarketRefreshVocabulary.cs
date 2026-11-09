@@ -95,7 +95,7 @@ public sealed class MarketRefreshVocabulary
             var worldSummary = deferredWorlds.Count <= 3
                 ? string.Join(", ", deferredWorlds)
                 : $"{deferredWorlds.Count} worlds";
-            details.Add($"{worldSummary} still pending");
+            details.Add($"{worldSummary} not corroborated");
         }
 
         var prefix = Festive

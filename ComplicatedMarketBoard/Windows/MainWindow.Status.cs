@@ -111,12 +111,16 @@ public partial class MainWindow
     private string BuildMarketFreshnessTooltip()
     {
         var response = CurrentItem.UniversalisResponse;
+        var noData = response.WorldsWithoutListingData.Count > 0
+            ? $"{Market.MarketListingDataPolicy.DescribeUnavailable(response)}. This is not a fetch failure or proof of an empty market.\n"
+            : "";
         var confidence = response.ProvisionalWorlds.Count > 0
             ? $"Provisional worlds: {string.Join(", ", response.ProvisionalWorlds.Keys)}\n" +
               "~ marks recent provisional prices; ! means the upload window elapsed without corroboration.\n" +
               "These are exact returned rows; price or availability may have changed.\n" +
               "CMB rechecks automatically; the cheapest result may be provisional.\n"
             : "";
+        confidence = noData + confidence;
         var listingCoverage = response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited
             ? $"Listing coverage: {response.Listings.Count} of {response.RequestedListingCount} requested (Universalis repeated rows)"
             : $"Listings: {response.Listings.Count}";
