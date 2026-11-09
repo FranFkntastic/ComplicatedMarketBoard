@@ -19,7 +19,7 @@ public partial class MainWindow
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
         ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 0.2f * spacing.Y);
 
-        if (RefreshInProgress)
+        if (RefreshInProgress && CurrentItem.UniversalisResponse.ProvisionalWorlds.Count == 0)
         {
             var elapsed = FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - RefreshStartedAt);
             ImGui.ProgressBar(
@@ -49,7 +49,7 @@ public partial class MainWindow
         if (response.FetchTime == 0)
             return Ui.ColourWhite3;
 
-        if (response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited)
+        if (response.ProvisionalWorlds.Count > 0 || response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited)
             return Ui.ColourHq;
 
         return Ui.ColourCyan;
@@ -68,6 +68,8 @@ public partial class MainWindow
             return "Market data not loaded";
 
         var fetchedAgo = FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - response.FetchTime);
+        if (response.ProvisionalWorlds.Count > 0)
+            return $"{Market.MarketProvisionalListingPolicy.Summary(response)}; ~ marks provisional prices";
         var summary = string.IsNullOrWhiteSpace(RefreshStatusText)
             ? "Market data refreshed"
             : RefreshStatusText;
@@ -109,11 +111,16 @@ public partial class MainWindow
     private string BuildMarketFreshnessTooltip()
     {
         var response = CurrentItem.UniversalisResponse;
+        var confidence = response.ProvisionalWorlds.Count > 0
+            ? $"Provisional worlds: {string.Join(", ", response.ProvisionalWorlds.Keys)}\n" +
+              "~ prices are exact returned rows, not yet corroborated. Price or availability may have changed.\n" +
+              "CMB rechecks automatically; the cheapest result may be provisional.\n"
+            : "";
         var listingCoverage = response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited
-            ? $"Listing coverage: {response.Listings.Count} current of {response.RequestedListingCount} requested (Universalis repeated rows)"
+            ? $"Listing coverage: {response.Listings.Count} of {response.RequestedListingCount} requested (Universalis repeated rows)"
             : $"Listings: {response.Listings.Count}";
         if (response.WorldOutOfDate.Count == 0)
-            return $"{listingCoverage}\nNo freshness data was returned for this item.";
+            return $"{confidence}{listingCoverage}\nNo freshness data was returned for this item.";
 
         var freshness = response.WorldOutOfDate.OrderByDescending(w => w.Value).ToList();
         var newest = freshness.MinBy(w => w.Value);
@@ -129,7 +136,7 @@ public partial class MainWindow
             : "unknown";
 
         return
-            $"Fetched: {fetchedAt}\n" +
+            confidence + $"Fetched: {fetchedAt}\n" +
             $"Newest upload: {newestUpload}\n" +
             $"Freshness: {min:F2} / {avg:F2} / {max:F2} hrs min/avg/max\n" +
             $"Freshest market: {newest.Key} ({newest.Value:F2} hrs)\n" +

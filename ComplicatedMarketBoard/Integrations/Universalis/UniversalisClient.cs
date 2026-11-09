@@ -78,7 +78,8 @@ public sealed class UniversalisClient
         CancellationToken cancellationToken,
         Action<UniversalisRequestProgress>? reportProgress = null,
         bool requireCurrentDetails = false,
-        MarketRefreshVocabulary? vocabulary = null)
+        MarketRefreshVocabulary? vocabulary = null,
+        bool reconcileProvisionalOnly = false)
     {
         return await RunWithDiagnosticsAsync(
             gameItem,
@@ -89,7 +90,8 @@ public sealed class UniversalisClient
                 cancellationToken,
                 reportProgress,
                 requireCurrentDetails,
-                vocabulary ?? MarketRefreshVocabulary.Standard));
+                vocabulary ?? MarketRefreshVocabulary.Standard,
+                reconcileProvisionalOnly));
     }
 
     public async Task<UniversalisResponse> GetDataForTargetAsync(
@@ -198,9 +200,12 @@ public sealed class UniversalisClient
         CancellationToken cancellationToken,
         Action<UniversalisRequestProgress>? reportProgress,
         bool requireCurrentDetails,
-        MarketRefreshVocabulary vocabulary)
+        MarketRefreshVocabulary vocabulary,
+        bool reconcileProvisionalOnly)
     {
-        var worldProbeCache = new Dictionary<string, MarketFreshnessProbe>(StringComparer.OrdinalIgnoreCase);
+        var worldProbeCache = reconcileProvisionalOnly
+            ? MarketProvisionalListingPolicy.ReconciliationFences(gameItem.UniversalisResponse, gameItem.TargetRegion)
+            : new Dictionary<string, MarketFreshnessProbe>(StringComparer.OrdinalIgnoreCase);
         var customScope = P.Config.CustomMarketScopes.FirstOrDefault(scope => scope.Id == P.Config.selectedCustomScopeId);
         UniversalisResponse response;
         if (customScope is not null)
@@ -405,16 +410,25 @@ public sealed class UniversalisClient
         if (history.Status != UniversalisResponseStatus.Success)
             return history;
 
+        detailed.VerificationProbes = resolvedWorldProbes;
+
         var lastMatch = MarketWorldPartitionPolicy.CompareEligibleScope(
             resolvedWorldProbes,
             detailed,
             P.Config.UniversalisHqOnly,
             P.Config.UniversalisListings,
             deferredWorlds);
+        if (detailed.ProvisionalWorlds.Count > 0)
+        {
+            TraceFetch("recent-upload-provisional", targetName,
+                $"Returning exact rows while recent uploads reconcile on: {string.Join(", ", detailed.ProvisionalWorlds.Keys)}.");
+        }
         if (lastMatch.IsCurrent)
         {
             TraceFetch(
-                deferredWorlds.Count == 0
+                detailed.ProvisionalWorlds.Count > 0
+                    ? "detail-verification-provisional"
+                    : deferredWorlds.Count == 0
                     ? "detail-verification-accepted"
                     : "detail-verification-partial",
                 targetName,
@@ -522,6 +536,7 @@ public sealed class UniversalisClient
                 if (retriedDetailed.Status == UniversalisResponseStatus.Success)
                 {
                     detailed = retriedDetailed;
+                    detailed.VerificationProbes = resolvedWorldProbes;
                 }
                 else
                 {
@@ -719,7 +734,7 @@ public sealed class UniversalisClient
         var verifiedWorldCount = MarketWorldPartitionPolicy.CountVerifiedWorlds(
             resolvedWorldProbes,
             deferredWorlds);
-        if (verifiedWorldCount == 0 || !lastMatch.IsCurrent)
+        if ((verifiedWorldCount == 0 && detailed.ProvisionalWorlds.Count == 0) || !lastMatch.IsCurrent)
         {
             return CreateStaleResponse(
                 vocabulary,
@@ -750,6 +765,7 @@ public sealed class UniversalisClient
             foreach (var repair in repairedPartitions)
                 MarketListingReconciler.ReplaceWorldPartition(refill, repair.Key, repair.Value);
             detailed = refill;
+            detailed.VerificationProbes = resolvedWorldProbes;
             lastMatch = MarketWorldPartitionPolicy.CompareEligibleScope(
                 resolvedWorldProbes,
                 detailed,
@@ -1080,6 +1096,7 @@ public sealed class UniversalisClient
         var mergedWorldOutOfDate = new Dictionary<string, double>();
         var mergedWorldUploadTimes = new Dictionary<string, long>();
         var mergedDeferredWorlds = new Dictionary<string, DeferredWorldPartition>(StringComparer.OrdinalIgnoreCase);
+        var mergedProvisionalWorlds = new Dictionary<string, ProvisionalWorldPartition>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var response in responses)
         {
@@ -1097,6 +1114,8 @@ public sealed class UniversalisClient
 
             foreach (var deferred in response.DeferredWorlds)
                 mergedDeferredWorlds[deferred.Key] = deferred.Value;
+            foreach (var provisional in response.ProvisionalWorlds)
+                mergedProvisionalWorlds[provisional.Key] = provisional.Value;
         }
 
         var duplicateLimited = responses.Any(response =>
@@ -1118,6 +1137,8 @@ public sealed class UniversalisClient
             LatestUploadTime = mergedWorldUploadTimes.Count > 0 ? mergedWorldUploadTimes.Values.Max() : responses.Max(response => response.LatestUploadTime),
             WorldUploadTimes = mergedWorldUploadTimes,
             DeferredWorlds = mergedDeferredWorlds,
+            ProvisionalWorlds = mergedProvisionalWorlds,
+            VerificationProbes = responses.SelectMany(response => response.VerificationProbes).ToArray(),
             RawListingCount = responses.Sum(response => response.RawListingCount),
             ListingRequestLimit = responses.Sum(response => response.ListingRequestLimit),
             ListingPageMayBeTruncated = responses.Any(response => response.ListingPageMayBeTruncated),
@@ -1159,6 +1180,13 @@ public sealed class UniversalisClient
         UniversalisResponse? previousVerifiedResponse,
         IReadOnlyDictionary<string, string> deferredWorlds)
     {
+        if (detailed.VerificationProbes.Count > 0
+            && detailed.VerificationProbes.All(probe => deferredWorlds.ContainsKey(probe.TargetName)))
+            return new UniversalisResponse
+            {
+                Status = UniversalisResponseStatus.StaleData,
+                FailureDetail = "Universalis returned no corroborated or eligible provisional world partition.",
+            };
         var duplicateLimited = MarketListingCoveragePolicy.IsDuplicateLimited(
             detailed,
             listingLimit);

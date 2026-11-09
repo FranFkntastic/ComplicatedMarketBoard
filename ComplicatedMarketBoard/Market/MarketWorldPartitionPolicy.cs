@@ -18,10 +18,17 @@ public static class MarketWorldPartitionPolicy
         UniversalisResponse detailed,
         bool hqOnly,
         int listingLimit,
-        IReadOnlyDictionary<string, string> deferredWorlds)
+        IReadOnlyDictionary<string, string> deferredWorlds,
+        long? nowUtcMs = null)
     {
+        var fullMatch = MarketFreshnessMatcher.CompareScope(
+            worldProbes.Where(probe => !deferredWorlds.ContainsKey(probe.TargetName)).ToArray(),
+            detailed, hqOnly, listingLimit);
+        MarketProvisionalListingPolicy.Classify(
+            detailed, fullMatch.Gaps, nowUtcMs ?? DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
         var eligibleProbes = worldProbes
-            .Where(probe => !deferredWorlds.ContainsKey(probe.TargetName))
+            .Where(probe => !deferredWorlds.ContainsKey(probe.TargetName)
+                            && !detailed.ProvisionalWorlds.ContainsKey(probe.TargetName))
             .ToArray();
         return eligibleProbes.Length == 0
             ? MarketFreshnessMatch.Current()

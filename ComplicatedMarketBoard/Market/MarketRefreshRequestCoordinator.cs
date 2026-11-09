@@ -10,7 +10,10 @@ public sealed record MarketRefreshRequestKey(
 public sealed record MarketRefreshRequestContext(
     int Version,
     MarketRefreshRequestKey Key,
-    CancellationTokenSource Cancellation);
+    CancellationTokenSource Cancellation)
+{
+    public bool IsReconciling { get; set; }
+}
 
 public sealed class MarketRefreshRequestCoordinator : IDisposable
 {
@@ -30,6 +33,7 @@ public sealed class MarketRefreshRequestCoordinator : IDisposable
         {
             if (activeRequest is { } current
                 && !current.Cancellation.IsCancellationRequested
+                && !current.IsReconciling
                 && current.Key == key)
             {
                 return null;

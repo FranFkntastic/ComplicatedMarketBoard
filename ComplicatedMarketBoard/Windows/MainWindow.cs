@@ -587,7 +587,7 @@ public partial class MainWindow : Window, IDisposable
         Data.Axis20.Push();
 
         ImGui.Text(CurrentItemLabel);
-        if (LoadingQueue > 0)
+        if (LoadingQueue > 0 && RefreshInProgress)
         {
             ImGui.SameLine();
             ImGui.PushFont(UiBuilder.IconFont);
@@ -1058,6 +1058,8 @@ public partial class MainWindow : Window, IDisposable
 
     private void RebuildMarketDataProjections()
     {
+        var previousSelection = selectedListing >= 0 && selectedListing < sortedListings.Count
+            ? sortedListings[selectedListing] : null;
         var listings = CurrentItem.UniversalisResponse.Listings.AsEnumerable();
         if (P.Config.FilterHq)
         {
@@ -1085,6 +1087,7 @@ public partial class MainWindow : Window, IDisposable
         };
 
         sortedListings = listings.ToArray();
+        selectedListing = Market.MarketListingSelectionPolicy.FindIndex(sortedListings, previousSelection);
         var entries = CurrentItem.UniversalisResponse.Entries.AsEnumerable();
         if (P.Config.FilterHq)
         {
@@ -1163,7 +1166,9 @@ public partial class MainWindow : Window, IDisposable
         ImGui.TableNextColumn();
 
         // Selling
-        var selling = $"{listing.PricePerUnit}";
+        var response = CurrentItem.UniversalisResponse;
+        response.ProvisionalWorlds.TryGetValue(listing.WorldName, out var provisional);
+        var selling = $"{listing.PricePerUnit}{(provisional is not null ? " ~" : "")}";
         ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
         if (P.Config.NumbersAlignRight)
         {
@@ -1172,6 +1177,8 @@ public partial class MainWindow : Window, IDisposable
         }
         if (ImGui.Selectable($"{selling}##listing{index}", selectedListing == index, ImGuiSelectableFlags.SpanAllColumns))
             selectedListing = index;
+        if (provisional is not null && ImGui.IsItemHovered())
+            ImGui.SetTooltip(provisional.Explanation);
         ImGui.TableNextColumn();
 
         // Q

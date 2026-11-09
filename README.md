@@ -1,5 +1,7 @@
 # ComplicatedMarketBoard
 
+Recent uploads can temporarily disagree between Universalis's price summaries and detailed listings. CMB includes eligible exact listing rows with a `~` beside the price and an “awaiting corroboration” summary, then rechecks automatically. Hover a marked price for details: its price or availability may have changed, and it is not a confirmed regional bargain. Same-revision contradictions and conflicting copies of a listing are not treated as ordinary upload delay.
+
 ComplicatedMarketBoard is a compact Dalamud market board helper for FFXIV.
 
 It builds on the idea of Simple Market Board with a few extra conveniences: quick item lookup, sortable tables, configurable market scopes, and clearer Universalis freshness information.

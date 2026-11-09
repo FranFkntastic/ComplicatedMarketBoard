@@ -17,6 +17,7 @@ public static class MarketListingReconciler
             var retained = false;
             var retainedUploadTime = 0L;
             if (previous is not null
+                && !previous.ProvisionalWorlds.ContainsKey(deferred.Key)
                 && previous.WorldUploadTimes.TryGetValue(deferred.Key, out retainedUploadTime))
             {
                 var previousPartition = new UniversalisResponse
@@ -117,6 +118,7 @@ public static class MarketListingReconciler
             .ToList();
         scope.WorldUploadTimes.Remove(worldName);
         scope.WorldOutOfDate.Remove(worldName);
+        scope.ProvisionalWorlds.Remove(worldName);
         scope.ConflictingListingIdentities = scope.ConflictingListingIdentities
             .Where(identity => !IdentityMatchesWorld(identity.World, worldName, worldIds))
             .ToArray();
