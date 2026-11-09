@@ -114,6 +114,12 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         });
         if (pluginInterface.ConfigFile.Exists) ConfigStore.TryMigrateFrom(pluginInterface.ConfigFile.FullName);
         Config = ConfigStore.Load();
+        var configuredConcurrency = Config.UniversalisMaxConcurrentRequests;
+        if (Config.NormalizeUniversalisConcurrency())
+        {
+            Service.Log.Warning($"[Universalis] Invalid concurrent request limit {configuredConcurrency}; normalized to {Config.UniversalisMaxConcurrentRequests} (allowed 1-8).");
+            Config.Save();
+        }
 
         // theme
         ImGuiThemeLoadCustomOrDefault();

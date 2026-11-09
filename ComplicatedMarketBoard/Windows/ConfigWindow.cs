@@ -9,6 +9,7 @@ using Lumina.Excel.Sheets;
 using Lumina.Extensions;
 using Dalamud.Bindings.ImGui;
 using ComplicatedMarketBoard.Market;
+using ComplicatedMarketBoard.Integrations.Universalis;
 using ComplicatedMarketBoard.Windows.Controls;
 using Miosuke.Extensions;
 using Franthropy.Dalamud.UI.Seasonal;
@@ -512,7 +513,7 @@ public class ConfigWindow : Window, IDisposable
         ImGui.TextColored(Ui.ColourCyan, "Universalis");
 
 
-        ImGui.BeginChild("table DrawData Universalis", new Vector2(table_width, table_height * 3), false);
+        ImGui.BeginChild("table DrawData Universalis", new Vector2(table_width, table_height * 4), false);
         ImGui.Columns(2);
         ImGui.SetColumnWidth(0, col_name_width);
         ImGui.SetColumnWidth(1, col_value_width);
@@ -533,6 +534,23 @@ public class ConfigWindow : Window, IDisposable
             "Search on the whole region (e.g., Japan) or during peak times can take notably longer time. Please use a reasonable value.\n" +
             "Default: 20."
         );
+        ImGui.NextColumn();
+
+        ImGui.TextColored(Ui.ColourWhiteDim, "　Concurrent requests");
+        ImGui.NextColumn();
+        var concurrentRequests = P.Config.UniversalisMaxConcurrentRequests;
+        ImGui.SetNextItemWidth(col_value_content_width);
+        if (ImGui.SliderInt($"{suffix}UniversalisMaxConcurrentRequests", ref concurrentRequests,
+                UniversalisRequestBudget.MinimumConcurrency, UniversalisRequestBudget.MaximumConcurrency))
+        {
+            P.Config.UniversalisMaxConcurrentRequests = UniversalisRequestBudget.Normalize(concurrentRequests);
+            P.Config.Save();
+        }
+        ImGuiComponents.HelpMarker(
+            "Maximum simultaneous Universalis requests across searches and verification.\n" +
+            "Applies automatically once active and queued requests finish; no reload needed.\n" +
+            "Request spacing and rate-limit cooldowns remain enabled. Higher is not always faster.\n" +
+            "Range: 1-8. Default: 3.");
         ImGui.NextColumn();
 
         // UniversalisListings

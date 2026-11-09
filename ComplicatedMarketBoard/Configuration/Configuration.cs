@@ -1,6 +1,7 @@
 using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Text;
 using ComplicatedMarketBoard.Market;
+using ComplicatedMarketBoard.Integrations.Universalis;
 using Franthropy.Dalamud.UI.Seasonal;
 
 
@@ -63,6 +64,16 @@ public class ComplicatedMarketBoardConfig
 
     // universalis
     public int RequestTimeout = 20;
+    public int UniversalisMaxConcurrentRequests = UniversalisRequestBudget.DefaultConcurrency;
+
+    internal bool NormalizeUniversalisConcurrency()
+    {
+        var normalized = UniversalisRequestBudget.Normalize(UniversalisMaxConcurrentRequests);
+        if (normalized == UniversalisMaxConcurrentRequests)
+            return false;
+        UniversalisMaxConcurrentRequests = normalized;
+        return true;
+    }
     public int UniversalisListings = 70;
     public int UniversalisEntries = 70;
 
