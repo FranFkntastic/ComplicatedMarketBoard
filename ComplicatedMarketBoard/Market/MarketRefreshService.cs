@@ -169,6 +169,7 @@ public sealed class MarketRefreshService
             P.MainWindow.ShowCachedMarketData(gameItem.Name);
             P.MainWindow.CurrentItemUpdate(gameItem);
             SearchHistoryUpdate(gameItem);
+            PublishPriceNotifications(gameItem);
             await ReconcileProvisionalAsync(request, gameItem, MarketRefreshVocabulary.Create(
                 P.Config.HolidaySpirit, DateOnly.FromDateTime(DateTime.Now)));
             return;
@@ -229,13 +230,7 @@ public sealed class MarketRefreshService
         gameItem.WorldOutOfDate = universalisResponse.WorldOutOfDate;
         gameItem.AvgPrice = universalisResponse.AveragePrice;
 
-        if (universalisResponse.ProvisionalWorlds.Count == 0
-            && universalisResponse.WorldsWithoutListingData.Count == 0
-            && universalisResponse.Listings.Count > 0)
-        {
-            if (P.Config.EnableChatLog) SendChatMessage(gameItem);
-            if (P.Config.EnableToastLog) SendToast(gameItem);
-        }
+        PublishPriceNotifications(gameItem);
 
         P.MainWindow.CurrentItemUpdate(gameItem);
         SearchHistoryUpdate(gameItem);
@@ -384,6 +379,18 @@ public sealed class MarketRefreshService
 
 
     // -------------------------------- notification --------------------------------
+    private void PublishPriceNotifications(MarketItem gameItem)
+    {
+        var response = gameItem.UniversalisResponse;
+        if (response.ProvisionalWorlds.Count == 0
+            && response.WorldsWithoutListingData.Count == 0
+            && response.Listings.Count > 0)
+        {
+            if (P.Config.EnableChatLog) SendChatMessage(gameItem);
+            if (P.Config.EnableToastLog) SendToast(gameItem);
+        }
+    }
+
     public void SendChatMessage(MarketItem gameItem)
     {
         double price;

@@ -5,6 +5,23 @@ namespace ComplicatedMarketBoard.Tests;
 public sealed class RenderPathBoundaryTests
 {
     [Fact]
+    public void CachedAndFetchedResultsShareQualifiedPriceNotifications()
+    {
+        var source = ReadSource("ComplicatedMarketBoard", "Market", "MarketRefreshService.cs");
+        var refresh = ExtractMethodBody(source, "CheckGameItemAsync");
+        var cachedStart = refresh.IndexOf("if (MarketRefetchPolicy.CanReuse", StringComparison.Ordinal);
+        var cachedEnd = refresh.IndexOf("return;", cachedStart, StringComparison.Ordinal);
+        Assert.Contains("PublishPriceNotifications(gameItem)", refresh[cachedStart..cachedEnd]);
+        Assert.Contains("PublishPriceNotifications(gameItem)", refresh[cachedEnd..]);
+        var notifications = ExtractMethodBody(source, "PublishPriceNotifications");
+        Assert.Contains("response.ProvisionalWorlds.Count == 0", notifications);
+        Assert.Contains("response.WorldsWithoutListingData.Count == 0", notifications);
+        Assert.Contains("response.Listings.Count > 0", notifications);
+        Assert.Contains("if (P.Config.EnableChatLog) SendChatMessage(gameItem)", notifications);
+        Assert.Contains("if (P.Config.EnableToastLog) SendToast(gameItem)", notifications);
+    }
+
+    [Fact]
     public void ConcurrentRequestControlPersistsWithoutReplacingTheHttpClient()
     {
         var source = ReadSource("ComplicatedMarketBoard", "Windows", "ConfigWindow.cs");
