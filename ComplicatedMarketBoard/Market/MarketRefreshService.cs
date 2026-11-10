@@ -125,7 +125,7 @@ public sealed class MarketRefreshService
             try
             {
                 Interlocked.Increment(ref P.MainWindow.LoadingQueue);
-                await CheckGameItemAsync(request, gameItem, requestedScope, requireCurrentDetails: true);
+                await CheckGameItemAsync(request, gameItem, requestedScope, requireCurrentDetails: true, forceRefresh: true);
             }
             catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { }
             catch (Exception ex)
@@ -150,7 +150,8 @@ public sealed class MarketRefreshService
         MarketRefreshRequestContext request,
         MarketItem gameItem,
         string requestedScope,
-        bool requireCurrentDetails)
+        bool requireCurrentDetails,
+        bool forceRefresh = false)
     {
         request.Cancellation.Token.ThrowIfCancellationRequested();
         if (!requestCoordinator.IsCurrent(request))
@@ -158,6 +159,20 @@ public sealed class MarketRefreshService
 
         P.MainWindow.CurrentItemLabel = gameItem.Name;
         P.MainWindow.CurrentItemIcon = Service.Texture.GetFromGameIcon(new GameIconLookup(gameItem.InGame.Icon))!;
+        var requestIdentity = GetRequestIdentity(requestedScope);
+        if (MarketRefetchPolicy.CanReuse(P.Config.ListingRefetch, P.Config.ListingRefetchAgeSeconds,
+                gameItem.UniversalisResponse.FetchTime, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                gameItem.UniversalisResponse.Status == UniversalisResponseStatus.Success,
+                gameItem.CachedRequestIdentity == requestIdentity, forceRefresh))
+        {
+            gameItem.TargetRegion = requestedScope;
+            P.MainWindow.ShowCachedMarketData(gameItem.Name);
+            P.MainWindow.CurrentItemUpdate(gameItem);
+            SearchHistoryUpdate(gameItem);
+            await ReconcileProvisionalAsync(request, gameItem, MarketRefreshVocabulary.Create(
+                P.Config.HolidaySpirit, DateOnly.FromDateTime(DateTime.Now)));
+            return;
+        }
         gameItem.TargetRegion = requestedScope;
         gameItem.FetchTimestamp = (ulong)DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
         var vocabulary = MarketRefreshVocabulary.Create(
@@ -209,6 +224,8 @@ public sealed class MarketRefreshService
         }
 
         gameItem.UniversalisResponse = universalisResponse;
+        // A setting changed during the await must not label a mixed request as reusable.
+        gameItem.CachedRequestIdentity = requestIdentity == GetRequestIdentity(requestedScope) ? requestIdentity : "";
         gameItem.WorldOutOfDate = universalisResponse.WorldOutOfDate;
         gameItem.AvgPrice = universalisResponse.AveragePrice;
 
@@ -260,9 +277,14 @@ public sealed class MarketRefreshService
                 gameItem.UniversalisResponse, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
             try
             {
+                var reconciliationIdentity = GetRequestIdentity(gameItem.TargetRegion);
+                if (gameItem.CachedRequestIdentity != reconciliationIdentity)
+                    gameItem.CachedRequestIdentity = "";
                 response = await P.Universalis.GetDataAsync(
                     gameItem, recheck.Token, requireCurrentDetails: true,
                     vocabulary: vocabulary, reconcileProvisionalOnly: true);
+                if (reconciliationIdentity != GetRequestIdentity(gameItem.TargetRegion))
+                    gameItem.CachedRequestIdentity = "";
             }
             catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { throw; }
             catch (OperationCanceledException)
@@ -310,6 +332,15 @@ public sealed class MarketRefreshService
             P.MainWindow.CompleteMarketDataRefresh(gameItem.Name,
                 MarketProvisionalListingPolicy.Summary(gameItem.UniversalisResponse));
         }
+    }
+
+    private static string GetRequestIdentity(string requestedScope)
+    {
+        var custom = P.Config.CustomMarketScopes.FirstOrDefault(scope => scope.Id == P.Config.selectedCustomScopeId);
+        var targets = custom is null ? new[] { requestedScope } : custom.IncludedScopes.ToArray();
+        var worlds = P.MainWindow.ScopeCatalog.ExpandToWorldNames(targets, P.MainWindow.GetCurrentWorldScopeName());
+        return MarketRefetchPolicy.RequestIdentity(requestedScope, custom?.Id, worlds,
+            P.Config.UniversalisHqOnly, P.Config.UniversalisListings, P.Config.UniversalisEntries);
     }
 
     private static string GetUniversalisFailureText(UniversalisResponse response)

@@ -61,6 +61,8 @@ public class ComplicatedMarketBoardConfig
     // cache
     public int MaxCacheItems = 30;
     public bool CleanCacheASAP = true;
+    public ListingRefetchMode ListingRefetch = ListingRefetchMode.Always;
+    public int ListingRefetchAgeSeconds = MarketRefetchPolicy.DefaultAgeSeconds;
 
     // universalis
     public int RequestTimeout = 20;

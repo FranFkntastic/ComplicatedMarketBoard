@@ -14,6 +14,8 @@ public sealed class MarketItem
     public UniversalisResponse UniversalisResponse { get; set; } = new();
     public Dictionary<string, double> WorldOutOfDate { get; set; } = [];
     public double AvgPrice { get; set; }
+    // Identity of the successful response, not of a later failed refresh attempt.
+    public string CachedRequestIdentity { get; set; } = "";
 }
 
 public enum PriceDisplayMode : uint

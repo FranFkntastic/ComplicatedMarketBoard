@@ -510,6 +510,33 @@ public class ConfigWindow : Window, IDisposable
             "Enable: Cache clean will also run immediately when a new item is added."
         );
 
+        ImGui.Text("Refetch when revisiting items");
+        var refetchMode = (int)P.Config.ListingRefetch;
+        ImGui.SetNextItemWidth(250);
+        if (ImGui.Combo($"{suffix}ListingRefetch", ref refetchMode,
+                "Always\0After a configured age\0Manual refresh only\0"))
+        {
+            P.Config.ListingRefetch = (ListingRefetchMode)refetchMode;
+            P.Config.Save();
+        }
+        ImGuiComponents.HelpMarker(
+            "Controls automatic refetches when revisiting a cached item through search, history, hover or hotkey.\n" +
+            "Missing data or a changed scope, HQ-only setting or record limit always fetches automatically.\n" +
+            "Refresh always requests current data. Provisional listings still reconcile automatically.\n" +
+            "Manual mode reuses the last matching result until it leaves the item cache; it does not mean prices are current.\n" +
+            "Default: Always.");
+        if (P.Config.ListingRefetch == ListingRefetchMode.AfterAge)
+        {
+            var ageSeconds = MarketRefetchPolicy.NormalizeAge(P.Config.ListingRefetchAgeSeconds);
+            ImGui.SetNextItemWidth(250);
+            if (ImGui.InputInt($"Reuse age (seconds){suffix}ListingRefetchAge", ref ageSeconds))
+            {
+                P.Config.ListingRefetchAgeSeconds = MarketRefetchPolicy.NormalizeAge(ageSeconds);
+                P.Config.Save();
+            }
+            ImGuiComponents.HelpMarker("Age since the original fetch, not the last view. Range: 1-86400 seconds. Default: 300.");
+        }
+
         ImGui.TextColored(Ui.ColourCyan, "Universalis");
 
 
