@@ -114,6 +114,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         });
         if (pluginInterface.ConfigFile.Exists) ConfigStore.TryMigrateFrom(pluginInterface.ConfigFile.FullName);
         Config = ConfigStore.Load();
+        if (Config.Migrate()) ConfigStore.Save(Config);
         var configuredConcurrency = Config.UniversalisMaxConcurrentRequests;
         if (Config.NormalizeUniversalisConcurrency())
         {

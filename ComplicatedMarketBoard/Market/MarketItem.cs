@@ -5,6 +5,7 @@ namespace ComplicatedMarketBoard.Market;
 
 public sealed class MarketItem
 {
+    public MarketObservationCache Observations { get; } = new();
     public ulong Id { get; set; }
     public string Name { get; set; } = "";
     public string TargetRegion { get; set; } = "";

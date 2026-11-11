@@ -19,7 +19,6 @@ public sealed class HoverSearchService
     // -------------------------------- hovered item --------------------------------
     public ulong HoverItemId = 0;
     public ulong SavedItemId = 0;
-    public ulong LastCheckItemId = 0;
     public CancellationTokenSource? ItemCts;
 
     private void OnHoveredItemChanged(object? sender, ulong thisItemId)
@@ -76,7 +75,6 @@ public sealed class HoverSearchService
 
         // clean up
         SavedItemId = 0;
-        LastCheckItemId = itemId;
     }
 
 }
