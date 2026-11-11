@@ -524,7 +524,7 @@ public class ConfigWindow : Window, IDisposable
             "Missing data or a changed scope, HQ-only setting or record limit always fetches automatically.\n" +
             "Refresh always requests current data. Provisional listings still reconcile automatically.\n" +
             "Manual mode reuses the last matching result until it leaves the item cache; it does not mean prices are current.\n" +
-            "Default: Always.");
+            "Default: After age, 300 seconds.");
         if (P.Config.ListingRefetch == ListingRefetchMode.AfterAge)
         {
             var ageSeconds = MarketRefetchPolicy.NormalizeAge(P.Config.ListingRefetchAgeSeconds);

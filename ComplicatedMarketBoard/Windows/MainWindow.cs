@@ -622,6 +622,8 @@ public partial class MainWindow : Window, IDisposable
             if (Miosuke.Action.Hotkey.IsActive([VirtualKey.CONTROL], !P.Config.SearchHotkeyLoose))
             {
                 P.Config.UniversalisHqOnly = !P.Config.UniversalisHqOnly;
+                P.Config.Save();
+                if (CurrentItem is not null) P.MarketRefresh.DoCheckAsync(CurrentItem.Id);
             }
             else
             {
@@ -761,7 +763,7 @@ public partial class MainWindow : Window, IDisposable
     {
         var currentLabel = GetSelectedMarketScopeLabel();
         Service.Log.Debug($"Fetch data of {currentLabel}");
-        P.MarketRefresh.DoCheckRefreshAsync(CurrentItem);
+        P.MarketRefresh.DoCheckAsync(CurrentItem.Id);
         lastSelectedWorld = currentLabel;
     }
 

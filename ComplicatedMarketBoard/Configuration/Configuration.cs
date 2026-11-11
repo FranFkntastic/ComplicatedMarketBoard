@@ -23,6 +23,15 @@ public class ComplicatedMarketBoardConfig
 
     public int Version = 1;
 
+    public bool Migrate()
+    {
+        if (Version >= 2) return false;
+        ListingRefetch = ListingRefetchMode.AfterAge;
+        ListingRefetchAgeSeconds = 300;
+        Version = 2;
+        return true;
+    }
+
 
     // -------------------------------- General --------------------------------
     // search
@@ -61,7 +70,7 @@ public class ComplicatedMarketBoardConfig
     // cache
     public int MaxCacheItems = 30;
     public bool CleanCacheASAP = true;
-    public ListingRefetchMode ListingRefetch = ListingRefetchMode.Always;
+    public ListingRefetchMode ListingRefetch = ListingRefetchMode.AfterAge;
     public int ListingRefetchAgeSeconds = MarketRefetchPolicy.DefaultAgeSeconds;
 
     // universalis

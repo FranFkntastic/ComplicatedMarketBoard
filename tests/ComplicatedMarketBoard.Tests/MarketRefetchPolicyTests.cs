@@ -34,7 +34,7 @@ public sealed class MarketRefetchPolicyTests
         => Assert.Equal(expected, MarketRefetchPolicy.NormalizeAge(input));
 
     [Theory]
-    [InlineData("{}", ListingRefetchMode.Always, 300)]
+    [InlineData("{}", ListingRefetchMode.AfterAge, 300)]
     [InlineData("{\"ListingRefetch\":1,\"ListingRefetchAgeSeconds\":45}", ListingRefetchMode.AfterAge, 45)]
     [InlineData("{\"ListingRefetch\":2}", ListingRefetchMode.Manual, 300)]
     public void PreferencesRoundTripAndOldConfigPreservesBehavior(string json, ListingRefetchMode mode, int age)

@@ -33,8 +33,9 @@ public sealed class MarketRefreshService
     {
         Service.Log.Debug($"[MarketRefresh] Start item lookup: {itemId}");
         var requestedScope = P.MainWindow.GetSelectedMarketScopeLabel();
-        var request = requestCoordinator.BeginSuperseding(
-            new MarketRefreshRequestKey(itemId, requestedScope, RequireCurrentDetails: true));
+        var request = requestCoordinator.TryBeginCoalesced(
+            new MarketRefreshRequestKey(itemId, GetRequestIdentity(requestedScope), RequireCurrentDetails: true));
+        if (request is null) return;
 
         Task.Run(async () =>
         {
@@ -110,7 +111,7 @@ public sealed class MarketRefreshService
     public void DoCheckRefreshAsync(MarketItem gameItem)
     {
         var requestedScope = P.MainWindow.GetSelectedMarketScopeLabel();
-        var requestKey = new MarketRefreshRequestKey(gameItem.Id, requestedScope, RequireCurrentDetails: true);
+        var requestKey = new MarketRefreshRequestKey(gameItem.Id, GetRequestIdentity(requestedScope), RequireCurrentDetails: true);
         var request = requestCoordinator.TryBeginCoalesced(requestKey);
         if (request is null)
         {
@@ -160,6 +161,15 @@ public sealed class MarketRefreshService
         P.MainWindow.CurrentItemLabel = gameItem.Name;
         P.MainWindow.CurrentItemIcon = Service.Texture.GetFromGameIcon(new GameIconLookup(gameItem.InGame.Icon))!;
         var requestIdentity = GetRequestIdentity(requestedScope);
+        gameItem.Observations.Remember(gameItem.CachedRequestIdentity, gameItem.UniversalisResponse);
+        var retained = gameItem.Observations.Find(requestIdentity);
+        if (retained != null)
+        {
+            gameItem.UniversalisResponse = retained;
+            gameItem.CachedRequestIdentity = requestIdentity;
+            gameItem.WorldOutOfDate = retained.WorldOutOfDate;
+            gameItem.AvgPrice = retained.AveragePrice;
+        }
         if (MarketRefetchPolicy.CanReuse(P.Config.ListingRefetch, P.Config.ListingRefetchAgeSeconds,
                 gameItem.UniversalisResponse.FetchTime, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 gameItem.UniversalisResponse.Status == UniversalisResponseStatus.Success,
@@ -227,6 +237,7 @@ public sealed class MarketRefreshService
         gameItem.UniversalisResponse = universalisResponse;
         // A setting changed during the await must not label a mixed request as reusable.
         gameItem.CachedRequestIdentity = requestIdentity == GetRequestIdentity(requestedScope) ? requestIdentity : "";
+        gameItem.Observations.Remember(gameItem.CachedRequestIdentity, universalisResponse);
         gameItem.WorldOutOfDate = universalisResponse.WorldOutOfDate;
         gameItem.AvgPrice = universalisResponse.AveragePrice;
 
@@ -304,6 +315,7 @@ public sealed class MarketRefreshService
 
             MarketProvisionalListingPolicy.ExpireDisplayedQualifications(response, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             gameItem.UniversalisResponse = response;
+            gameItem.Observations.Remember(gameItem.CachedRequestIdentity, response);
             gameItem.WorldOutOfDate = response.WorldOutOfDate;
             gameItem.AvgPrice = response.AveragePrice;
             P.MainWindow.CurrentItemUpdate(gameItem);
