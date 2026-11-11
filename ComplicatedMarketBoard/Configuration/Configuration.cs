@@ -67,6 +67,16 @@ public class ComplicatedMarketBoardConfig
     // universalis
     public int RequestTimeout = 20;
     public int UniversalisMaxConcurrentRequests = UniversalisRequestBudget.DefaultConcurrency;
+    public int UniversalisRequestSpacingMilliseconds = UniversalisRequestPacer.DefaultSpacingMilliseconds;
+
+    internal bool NormalizeUniversalisRequestSpacing()
+    {
+        var normalized = UniversalisRequestPacer.Normalize(UniversalisRequestSpacingMilliseconds);
+        if (normalized == UniversalisRequestSpacingMilliseconds)
+            return false;
+        UniversalisRequestSpacingMilliseconds = normalized;
+        return true;
+    }
 
     internal bool NormalizeUniversalisConcurrency()
     {

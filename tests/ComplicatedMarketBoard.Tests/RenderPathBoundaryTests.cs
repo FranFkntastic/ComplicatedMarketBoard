@@ -32,7 +32,25 @@ public sealed class RenderPathBoundaryTests
         Assert.Contains("UniversalisRequestBudget.MaximumConcurrency", control);
         Assert.Contains("P.Config.Save()", control);
         Assert.DoesNotContain("ReloadHttpClient", control);
-        Assert.Contains("table_height * 4", ExtractMethodBody(source, "DrawData"));
+        Assert.Contains("table_height * 5", ExtractMethodBody(source, "DrawData"));
+    }
+
+    [Fact]
+    public void RequestSpacingControlPersistsWithoutReplacingClientOrBypassingTheSharedBudget()
+    {
+        var source = ReadSource("ComplicatedMarketBoard", "Windows", "ConfigWindow.cs");
+        var start = source.IndexOf("var requestSpacing =", StringComparison.Ordinal);
+        var end = source.IndexOf("// UniversalisListings", start, StringComparison.Ordinal);
+        var control = source[start..end];
+        Assert.Contains("UniversalisRequestPacer.Normalize(requestSpacing)", control);
+        Assert.Contains("P.Config.Save()", control);
+        Assert.DoesNotContain("ReloadHttpClient", control);
+        var client = ReadSource("ComplicatedMarketBoard", "Integrations", "Universalis", "UniversalisClient.cs");
+        var send = ExtractMethodBody(client, "SendRequestAsync");
+        Assert.Contains("requestBudget.EnterAsync(cancellationToken)", send);
+        Assert.Contains("requestPacer.WaitAsync(cancellationToken)", send);
+        Assert.Contains("requestPacer.Dispose", client);
+        Assert.DoesNotContain("MinimumRequestStartInterval", client);
     }
 
     [Fact]

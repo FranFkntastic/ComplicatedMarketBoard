@@ -120,6 +120,12 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
             Service.Log.Warning($"[Universalis] Invalid concurrent request limit {configuredConcurrency}; normalized to {Config.UniversalisMaxConcurrentRequests} (allowed 1-8).");
             Config.Save();
         }
+        var configuredSpacing = Config.UniversalisRequestSpacingMilliseconds;
+        if (Config.NormalizeUniversalisRequestSpacing())
+        {
+            Service.Log.Warning($"[Universalis] Invalid request spacing {configuredSpacing}ms; normalized to {Config.UniversalisRequestSpacingMilliseconds}ms (allowed 50-1000).");
+            Config.Save();
+        }
 
         // theme
         ImGuiThemeLoadCustomOrDefault();

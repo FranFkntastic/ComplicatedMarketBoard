@@ -540,7 +540,7 @@ public class ConfigWindow : Window, IDisposable
         ImGui.TextColored(Ui.ColourCyan, "Universalis");
 
 
-        ImGui.BeginChild("table DrawData Universalis", new Vector2(table_width, table_height * 4), false);
+        ImGui.BeginChild("table DrawData Universalis", new Vector2(table_width, table_height * 5), false);
         ImGui.Columns(2);
         ImGui.SetColumnWidth(0, col_name_width);
         ImGui.SetColumnWidth(1, col_value_width);
@@ -578,6 +578,23 @@ public class ConfigWindow : Window, IDisposable
             "Applies automatically once active and queued requests finish; no reload needed.\n" +
             "Request spacing and rate-limit cooldowns remain enabled. Higher is not always faster.\n" +
             "Range: 1-8. Default: 3.");
+        ImGui.NextColumn();
+
+        ImGui.TextColored(Ui.ColourWhiteDim, "　Request spacing (ms)");
+        ImGui.NextColumn();
+        var requestSpacing = P.Config.UniversalisRequestSpacingMilliseconds;
+        ImGui.SetNextItemWidth(col_value_content_width);
+        if (ImGui.InputInt($"{suffix}UniversalisRequestSpacingMilliseconds", ref requestSpacing, 50, 100))
+        {
+            P.Config.UniversalisRequestSpacingMilliseconds = UniversalisRequestPacer.Normalize(requestSpacing);
+            P.Config.Save();
+        }
+        ImGuiComponents.HelpMarker(
+            "Minimum time between Universalis request starts across searches and verification.\n" +
+            "Applies to the next admission; an existing wait may finish first. No reload needed.\n" +
+            "Lower values may finish faster but increase request rate. Retry-After and recovery cooldowns still win.\n" +
+            "Other clients and plugins share Universalis's per-IP limits; this setting is per CMB client.\n" +
+            "Range: 50-1000 ms. Default: 200 ms.");
         ImGui.NextColumn();
 
         // UniversalisListings
