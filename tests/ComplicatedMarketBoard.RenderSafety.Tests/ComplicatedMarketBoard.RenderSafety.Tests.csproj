@@ -22,8 +22,10 @@
     <ProjectReference Include="$(FranthropyRoot)/src/Franthropy.Dalamud/Franthropy.Dalamud.csproj" Condition="'$(FranthropySource)' == 'Local'" />
     <Compile Include="..\ComplicatedMarketBoard.Tests\RenderPathBoundaryTests.cs" Link="RenderPathBoundaryTests.cs" />
     <Compile Include="..\ComplicatedMarketBoard.Tests\UniversalisSchedulingTests.cs" Link="UniversalisSchedulingTests.cs" />
+    <Compile Include="..\ComplicatedMarketBoard.Tests\UniversalisRequestPacerTests.cs" Link="UniversalisRequestPacerTests.cs" />
     <Compile Include="..\..\ComplicatedMarketBoard\Integrations\Universalis\UniversalisInitialFetch.cs" Link="UniversalisInitialFetch.cs" />
     <Compile Include="..\..\ComplicatedMarketBoard\Integrations\Universalis\UniversalisRequestBudget.cs" Link="UniversalisRequestBudget.cs" />
+    <Compile Include="..\..\ComplicatedMarketBoard\Integrations\Universalis\UniversalisRequestPacer.cs" Link="UniversalisRequestPacer.cs" />
   </ItemGroup>
 
 </Project>

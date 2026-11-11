@@ -25,19 +25,20 @@ public sealed class UniversalisClient
     private static readonly TimeSpan AggregateRequestTimeout = TimeSpan.FromSeconds(2);
     private static readonly TimeSpan AggregateInitialRetryDelay = TimeSpan.FromMilliseconds(250);
     private static readonly TimeSpan AggregateMaximumRetryDelay = TimeSpan.FromSeconds(1);
-    private static readonly TimeSpan MinimumRequestStartInterval = TimeSpan.FromMilliseconds(200);
     private static readonly TimeSpan FailureCooldown = TimeSpan.FromSeconds(30);
     private readonly UniversalisRequestBudget requestBudget;
-    private readonly SemaphoreSlim requestStartGate = new(1, 1);
+    private readonly UniversalisRequestPacer requestPacer;
     private readonly object retryStateLock = new();
     private readonly AsyncLocal<UniversalisFetchDiagnosticSession?> activeDiagnosticSession = new();
     private DateTimeOffset nextRequestAllowedAt = DateTimeOffset.MinValue;
-    private DateTimeOffset nextRequestStartAt = DateTimeOffset.MinValue;
 
     public UniversalisClient()
     {
+        requestPacer = new UniversalisRequestPacer(
+            () => P.Config.UniversalisRequestSpacingMilliseconds,
+            () => { lock (retryStateLock) return nextRequestAllowedAt; });
         requestBudget = new UniversalisRequestBudget(
-            () => P.Config.UniversalisMaxConcurrentRequests, requestStartGate.Dispose);
+            () => P.Config.UniversalisMaxConcurrentRequests, requestPacer.Dispose);
         httpClient = CreateHttpClient();
     }
 
@@ -317,13 +318,14 @@ public sealed class UniversalisClient
 
         var scanStartedAt = Stopwatch.GetTimestamp();
         var concurrency = requestBudget.Concurrency;
+        var spacingMilliseconds = requestPacer.SpacingMilliseconds;
         TraceFetch(
             "aggregate-scan-started",
             targetName,
-            $"Scanning {worldNames.Count} worlds with concurrency {concurrency} and {MinimumRequestStartInterval.TotalMilliseconds:F0}ms request spacing.");
+            $"Scanning {worldNames.Count} worlds with concurrency {concurrency} and {spacingMilliseconds}ms request spacing.");
         Service.Log.Info(
             $"[Universalis] Aggregate scan started for {targetName}: {worldNames.Count} worlds, " +
-            $"concurrency {concurrency}, {MinimumRequestStartInterval.TotalMilliseconds:F0}ms request spacing.");
+            $"concurrency {concurrency}, {spacingMilliseconds}ms request spacing.");
 
         var worldProbes = new MarketFreshnessProbe?[worldNames.Count];
         var deferredWorlds = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
@@ -1616,28 +1618,11 @@ public sealed class UniversalisClient
             progress,
             reportProgress,
             cancellationToken);
-        await WaitForRequestStartSlotAsync(cancellationToken);
+        await requestPacer.WaitAsync(cancellationToken);
 
         using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         requestTimeout.CancelAfter(timeout);
         return await httpClient.SendAsync(request, requestTimeout.Token);
-    }
-
-    private async Task WaitForRequestStartSlotAsync(CancellationToken cancellationToken)
-    {
-        await requestStartGate.WaitAsync(cancellationToken);
-        try
-        {
-            var delay = nextRequestStartAt - DateTimeOffset.UtcNow;
-            if (delay > TimeSpan.Zero)
-                await Task.Delay(delay, cancellationToken);
-
-            nextRequestStartAt = DateTimeOffset.UtcNow + MinimumRequestStartInterval;
-        }
-        finally
-        {
-            requestStartGate.Release();
-        }
     }
 
     private async Task WaitForSharedCooldownAsync(
