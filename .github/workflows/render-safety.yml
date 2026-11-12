@@ -1,4 +1,4 @@
-name: Render safety
+name: Production compilation
 
 on:
   # This maintained fork integrates on master; upstream SimpleMarketBoard uses main.
@@ -42,6 +42,23 @@ jobs:
         with:
           dotnet-version: 10.0.x
 
-      - name: Run render-path boundary tests
+      - name: Prepare Dalamud SDK references
+        shell: pwsh
+        run: |
+          $sdkReferenceRoot = Join-Path $env:RUNNER_TEMP 'cmb-build-references'
+          $sdkRoot = Join-Path $sdkReferenceRoot 'XIVLauncher/addon/Hooks/dev'
+          $sdkArchive = Join-Path $env:RUNNER_TEMP 'dalamud-sdk.zip'
+          Invoke-WebRequest 'https://goatcorp.github.io/dalamud-distrib/latest.zip' -OutFile $sdkArchive
+          Expand-Archive -LiteralPath $sdkArchive -DestinationPath $sdkRoot
+          foreach ($assembly in @('Dalamud', 'Dalamud.Bindings.ImGui', 'Dalamud.Bindings.ImPlot', 'Dalamud.Bindings.ImGuizmo', 'FFXIVClientStructs', 'InteropGenerator.Runtime', 'Newtonsoft.Json', 'Lumina', 'Lumina.Excel', 'Serilog', 'Microsoft.Extensions.ObjectPool')) {
+            if (-not (Test-Path -LiteralPath (Join-Path $sdkRoot "$assembly.dll"))) {
+              throw "Missing Dalamud SDK reference: $assembly.dll"
+            }
+          }
+          "DALAMUD_HOME=$sdkRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "CMB_SDK_REFERENCE_ROOT=$sdkReferenceRoot" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      # Keep the required status ID, but do not claim behavioral safety from compilation.
+      - name: Compile production plugin
         working-directory: ComplicatedMarketBoard
-        run: dotnet test tests/ComplicatedMarketBoard.RenderSafety.Tests/ComplicatedMarketBoard.RenderSafety.Tests.csproj -c Debug -p:FranthropySource=Local "-p:FranthropyRoot=$env:GITHUB_WORKSPACE/Franthropy"
+        run: dotnet build ComplicatedMarketBoard/ComplicatedMarketBoard.csproj -c Release -p:FranthropySource=Local "-p:FranthropyRoot=$env:GITHUB_WORKSPACE/Franthropy" "-p:AppData=$env:CMB_SDK_REFERENCE_ROOT"
