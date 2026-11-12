@@ -49,9 +49,14 @@ public partial class MainWindow
 
     public void DrawCharts()
     {
+        if (chartSnapshot is not null && (CurrentItem.UniversalisResponse.HistoryPending
+            || CurrentItem.UniversalisResponse.HistoryFailure.Length > 0))
+            ImGui.TextDisabled("Partial sales history; remaining targets are being retried.");
         if (chartSnapshot is null)
         {
-            ImGui.TextDisabled("Not enough sale history to chart.");
+            ImGui.TextDisabled(CurrentItem.UniversalisResponse.HistoryPending ? "Sales history pending..."
+                : CurrentItem.UniversalisResponse.HistoryFailure.Length > 0 ? "Sales history unavailable; retrying automatically."
+                : "Not enough sale history to chart.");
             return;
         }
 

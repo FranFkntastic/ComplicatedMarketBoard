@@ -37,6 +37,7 @@ public static class MarketProvisionalListingPolicy
             return cache;
         foreach (var probe in previous.VerificationProbes)
             if (!previous.ProvisionalWorlds.ContainsKey(probe.TargetName)
+                && !previous.PendingWorlds.Contains(probe.TargetName)
                 && !previous.DeferredWorlds.ContainsKey(probe.TargetName)
                 && !previous.WorldsWithoutListingData.Contains(probe.TargetName))
                 cache[probe.TargetName] = probe;
@@ -68,7 +69,12 @@ public static class MarketProvisionalListingPolicy
     public static string Summary(UniversalisResponse response)
     {
         var expired = response.ProvisionalWorlds.Values.Count(partition => partition.EligibilityExpired);
-        return $"Results available; {response.ProvisionalWorlds.Count - expired} recent world(s) awaiting corroboration" +
+        var recent = response.ProvisionalWorlds.Count - expired;
+        return "Results available" +
+           (response.ListingRefillPending ? "; listing coverage incomplete; retrying refill" : "") +
+           (response.PendingWorlds.Count > 0 ? $"; {response.PendingWorlds.Count} world(s) pending verification" : "") +
+           (recent > 0 ? $"; {recent} recent world(s) awaiting corroboration" : "") +
+           (response.HistoryPending ? "; sales history pending" : response.HistoryFailure.Length > 0 ? "; sales history unavailable; retrying" : "") +
            (response.WorldsWithoutListingData.Count > 0 ? $"; {MarketListingDataPolicy.DescribeUnavailable(response)}" : "") +
            (expired > 0 ? $"; {expired} world(s) uncorroborated (upload window elapsed)" : "") +
            (response.DeferredWorlds.Count > 0 ? $"; {response.DeferredWorlds.Count} world(s) deferred" : "") +

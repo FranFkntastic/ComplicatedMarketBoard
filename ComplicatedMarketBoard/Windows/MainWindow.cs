@@ -15,6 +15,7 @@ using ComplicatedMarketBoard.Market;
 using ComplicatedMarketBoard.Services;
 using Franthropy.Dalamud.UI.Performance;
 using Franthropy.Dalamud.UI.Tables;
+using Franthropy.Dalamud.UI.Styling;
 
 
 namespace ComplicatedMarketBoard.Windows;
@@ -116,7 +117,7 @@ public partial class MainWindow : Window, IDisposable
 
     public void CurrentItemUpdate(MarketItem gameItem)
     {
-        CurrentItem = gameItem;
+        CurrentItem = gameItem.Snapshot();
         CurrentItemIcon = Service.Texture.GetFromGameIcon(new GameIconLookup(CurrentItem.InGame.Icon))!;
         CurrentItem.Name = CurrentItem.InGame.Name.ToString();
         CurrentItemLabel = CurrentItem.Name;
@@ -1170,7 +1171,11 @@ public partial class MainWindow : Window, IDisposable
         // Selling
         var response = CurrentItem.UniversalisResponse;
         response.ProvisionalWorlds.TryGetValue(listing.WorldName, out var provisional);
-        var selling = $"{listing.PricePerUnit}{(provisional is not null ? (provisional.EligibilityExpired ? " !" : " ~") : "")}";
+        var pending = response.PendingWorlds.Contains(listing.WorldName);
+        if (pending || provisional is not null)
+            ImGui.TableSetBgColor(ImGuiTableBgTarget.RowBg0, ImGui.ColorConvertFloat4ToU32(
+                DalamudUiPalette.WithAlpha(DalamudUiPalette.Dark(Vector4.One).Warning, 0.14f)));
+        var selling = $"{listing.PricePerUnit}";
         ImGui.SetCursorPosY(ImGui.GetCursorPosY() + P.Config.tableRowHeightOffset);
         if (P.Config.NumbersAlignRight)
         {
@@ -1179,8 +1184,10 @@ public partial class MainWindow : Window, IDisposable
         }
         if (ImGui.Selectable($"{selling}##listing{index}", selectedListing == index, ImGuiSelectableFlags.SpanAllColumns))
             selectedListing = index;
-        if (provisional is not null && ImGui.IsItemHovered())
-            ImGui.SetTooltip(provisional.Explanation);
+        if ((pending || provisional is not null) && ImGui.IsItemHovered())
+            ImGui.SetTooltip(pending
+                ? "Pending verification: this exact listing was returned by Universalis, but its price or availability is not yet corroborated. CMB verifies and retries automatically."
+                : provisional!.Explanation);
         ImGui.TableNextColumn();
 
         // Q
@@ -1224,6 +1231,10 @@ public partial class MainWindow : Window, IDisposable
     {
         // === item price table 2 ===
         ImGui.BeginChild("col_left history_entries", new Vector2(0, height));
+        if (CurrentItem.UniversalisResponse.HistoryPending)
+            ImGui.TextDisabled("Sales history pending...");
+        else if (CurrentItem.UniversalisResponse.HistoryFailure.Length > 0)
+            ImGui.TextDisabled("Sales history unavailable; retrying automatically.");
         P.Config.soldColWidthOffset = EnsureColumnWidthOffsets(P.Config.soldColWidthOffset, HistoryColumnBaseWidths.Length);
 
         if (ImGui.BeginTable(
@@ -1411,7 +1422,8 @@ public partial class MainWindow : Window, IDisposable
         ImGuiComponents.HelpMarker(
             "Universalis sale velocity for this item. Higher values mean more recent sales volume in the selected market."
         );
-        ImGui.Text($"{(int)velocity}");
+        ImGui.Text(CurrentItem.UniversalisResponse.HistoryPending ? "Pending"
+            : CurrentItem.UniversalisResponse.HistoryFailure.Length > 0 ? "Unavailable" : $"{(int)velocity}");
     }
 
     private void DrawSearchHistory()

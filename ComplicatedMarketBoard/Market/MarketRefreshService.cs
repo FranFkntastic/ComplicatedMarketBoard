@@ -28,36 +28,151 @@ public sealed class MarketRefreshService
     // -------------------------------- game item --------------------------------
     public List<MarketItem> GameItemCacheList = [];
 
+    // Request starts and all UI/cache publications are serialized by Dalamud's owning thread.
+    // No projection rebuild runs under the coordinator lock, and a superseding start cannot
+    // interleave between the identity check and the publication.
+    private void Publish(MarketRefreshRequestContext request, System.Action publish)
+        => Service.Framework.RunOnFrameworkThread(() =>
+        {
+            if (requestCoordinator.IsCurrent(request)
+                && request.Key.TargetScope == GetRequestIdentity(P.MainWindow.GetSelectedMarketScopeLabel()))
+                publish();
+        }).GetAwaiter().GetResult();
+
+    private void ReportProgress(MarketRefreshRequestContext request, UniversalisRequestProgress progress)
+    {
+        if (request.HasPublished) return;
+        Interlocked.Exchange(ref request.LatestProgress, progress);
+        if (Interlocked.Exchange(ref request.ProgressQueued, 1) != 0) return;
+        _ = DispatchAsync();
+
+        async Task DispatchAsync()
+        {
+            try
+            {
+                await Service.Framework.RunOnFrameworkThread(() =>
+                {
+                    Interlocked.Exchange(ref request.ProgressQueued, 0);
+                    var latest = Interlocked.Exchange(ref request.LatestProgress, null);
+                    if (latest is not null && !request.HasPublished && requestCoordinator.IsCurrent(request)
+                        && request.Key.TargetScope == GetRequestIdentity(P.MainWindow.GetSelectedMarketScopeLabel()))
+                        P.MainWindow.UpdateMarketDataRefresh(latest.StatusText, latest.Progress);
+                }).ConfigureAwait(false);
+            }
+            catch (Exception exception)
+            {
+                Interlocked.Exchange(ref request.ProgressQueued, 0);
+                Service.Log.Warning(exception, "[MarketRefresh] Progress publication failed.");
+            }
+        }
+    }
+
+    private void FinishRequest(MarketRefreshRequestContext request)
+        => Service.Framework.RunOnFrameworkThread(() =>
+        {
+            // A settings-only change must resume the same intent instead of leaving Loading stuck.
+            if (requestCoordinator.IsCurrent(request)
+                && request.Key.TargetScope != GetRequestIdentity(P.MainWindow.GetSelectedMarketScopeLabel()))
+                BeginCheck(request.Key.ItemId);
+            requestCoordinator.End(request);
+        }).GetAwaiter().GetResult();
+
+    private void PublishFirst(MarketRefreshRequestContext request, MarketItem item)
+    {
+        if (!request.HasPublished)
+        {
+            SearchHistoryUpdate(item);
+            request.HasPublished = true;
+        }
+        else
+        {
+            // Replace the cached snapshot without changing recency or mutating enumerated lists.
+            var index = GameItemCacheList.FindIndex(cached => cached.Id == item.Id);
+            if (index >= 0) GameItemCacheList[index] = item.Snapshot();
+        }
+        PublishPriceNotifications(request, item);
+        ScheduleEligibilityExpiry(request, item);
+    }
+
+    private void ScheduleEligibilityExpiry(MarketRefreshRequestContext request, MarketItem item)
+    {
+        request.EligibilityTimer?.Cancel();
+        request.EligibilityTimer?.Dispose();
+        request.EligibilityTimer = null;
+        var boundaries = item.UniversalisResponse.ProvisionalWorlds.Values
+            .Where(partition => !partition.EligibilityExpired)
+            .Select(partition => partition.AggregateUploadTime
+                + (long)MarketProvisionalListingPolicy.RecentUploadWindow.TotalMilliseconds + 1).ToArray();
+        if (boundaries.Length == 0) return;
+        var timer = CancellationTokenSource.CreateLinkedTokenSource(request.Cancellation.Token);
+        request.EligibilityTimer = timer;
+        _ = ExpireAsync(timer.Token);
+
+        async Task ExpireAsync(CancellationToken token)
+        {
+            try
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(Math.Max(1,
+                    boundaries.Min() - DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())), token);
+                Publish(request, () =>
+                {
+                    var snapshot = item.UniversalisResponse.Snapshot();
+                    if (!MarketProvisionalListingPolicy.ExpireDisplayedQualifications(snapshot,
+                            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds())) return;
+                    item.UniversalisResponse = snapshot;
+                    item.Observations.Remember(item.CachedRequestIdentity, snapshot);
+                    P.MainWindow.CurrentItemUpdate(item);
+                    P.MainWindow.CompleteMarketDataRefresh(item.Name, MarketProvisionalListingPolicy.Summary(snapshot));
+                    PublishFirst(request, item);
+                });
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+            catch (Exception exception) { Service.Log.Warning(exception, "[MarketRefresh] Qualification expiry publication failed."); }
+        }
+    }
+
     // -------------------------------- market refresh --------------------------------
     public void DoCheckAsync(ulong itemId)
+        => _ = Service.Framework.RunOnFrameworkThread(() => BeginCheck(itemId));
+
+    private void BeginCheck(ulong itemId)
     {
         Service.Log.Debug($"[MarketRefresh] Start item lookup: {itemId}");
         var requestedScope = P.MainWindow.GetSelectedMarketScopeLabel();
         var request = requestCoordinator.TryBeginCoalesced(
             new MarketRefreshRequestKey(itemId, GetRequestIdentity(requestedScope), RequireCurrentDetails: true));
         if (request is null) return;
+        var cachedGameItem = GameItemCacheList.FirstOrDefault(i => i.Id == itemId)?.Snapshot();
+        if (cachedGameItem is not null && cachedGameItem.CachedRequestIdentity == request.Key.TargetScope)
+        {
+            cachedGameItem.UniversalisResponse = cachedGameItem.UniversalisResponse.Snapshot();
+            MarketProvisionalListingPolicy.ExpireDisplayedQualifications(cachedGameItem.UniversalisResponse,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            P.MainWindow.CurrentItemUpdate(cachedGameItem);
+        }
+        P.MainWindow.BeginMarketDataRefresh("item", "Loading item");
 
         Task.Run(async () =>
         {
             try
             {
                 Interlocked.Increment(ref P.MainWindow.LoadingQueue);
-                await CheckItemAsync(request, itemId, requestedScope);
+                await CheckItemAsync(request, itemId, requestedScope, cachedGameItem);
             }
             catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { }
             catch (Exception ex)
             {
                 Service.Log.Error($"[MarketRefresh] Item lookup failed, {ex.Message}");
-                if (requestCoordinator.IsCurrent(request))
+                Publish(request, () =>
                 {
                     P.MainWindow.CurrentItemLabel = "Error";
                     P.MainWindow.FailMarketDataRefresh(ex.Message);
-                }
+                });
             }
             finally
             {
                 Interlocked.Decrement(ref P.MainWindow.LoadingQueue);
-                requestCoordinator.End(request);
+                FinishRequest(request);
             }
         });
     }
@@ -65,18 +180,12 @@ public sealed class MarketRefreshService
     private async Task CheckItemAsync(
         MarketRefreshRequestContext request,
         ulong itemId,
-        string requestedScope)
+        string requestedScope,
+        MarketItem? cached_gameItem)
     {
-        var _cacheIds = GameItemCacheList.Select(i => i.Id).ToList();
-        if (_cacheIds.Contains(itemId))
+        if (cached_gameItem is not null)
         {
             Service.Log.Debug($"[MarketRefresh] {itemId} found in cache.");
-            var cached_gameItem = GameItemCacheList.Single(i => i.Id == itemId);
-            if (requestCoordinator.IsCurrent(request))
-            {
-                P.MainWindow.ShowCachedMarketData(cached_gameItem.Name);
-                P.MainWindow.CurrentItemUpdate(cached_gameItem);
-            }
             await CheckGameItemAsync(request, cached_gameItem, requestedScope, requireCurrentDetails: true);
             return;
         }
@@ -91,10 +200,14 @@ public sealed class MarketRefreshService
 
         if (gameItem.InGame.ItemSearchCategory.RowId == 0)
         {
+            Publish(request, () =>
+            {
             Service.NotificationManager.AddNotification(new Notification
             {
                 Content = $"{gameItem.Name} [{gameItem.Id}] is unmarketable.",
                 Type = NotificationType.Warning,
+            });
+            P.MainWindow.FailMarketDataRefresh("Item is unmarketable.");
             });
             return;
         }
@@ -109,6 +222,9 @@ public sealed class MarketRefreshService
     }
 
     public void DoCheckRefreshAsync(MarketItem gameItem)
+        => _ = Service.Framework.RunOnFrameworkThread(() => BeginRefresh(gameItem));
+
+    private void BeginRefresh(MarketItem gameItem)
     {
         var requestedScope = P.MainWindow.GetSelectedMarketScopeLabel();
         var requestKey = new MarketRefreshRequestKey(gameItem.Id, GetRequestIdentity(requestedScope), RequireCurrentDetails: true);
@@ -120,6 +236,7 @@ public sealed class MarketRefreshService
         }
 
         Service.Log.Debug($"[MarketRefresh] Start refresh: {gameItem.Id} on {requestedScope}");
+        P.MainWindow.BeginMarketDataRefresh(gameItem.Name);
 
         Task.Run(async () =>
         {
@@ -132,16 +249,16 @@ public sealed class MarketRefreshService
             catch (Exception ex)
             {
                 Service.Log.Error($"[MarketRefresh] Refresh failed, {ex.Message}");
-                if (requestCoordinator.IsCurrent(request))
+                Publish(request, () =>
                 {
                     P.MainWindow.CurrentItemLabel = "Error";
                     P.MainWindow.FailMarketDataRefresh(ex.Message);
-                }
+                });
             }
             finally
             {
                 Interlocked.Decrement(ref P.MainWindow.LoadingQueue);
-                requestCoordinator.End(request);
+                FinishRequest(request);
             }
         });
     }
@@ -158,11 +275,16 @@ public sealed class MarketRefreshService
         if (!requestCoordinator.IsCurrent(request))
             return;
 
-        P.MainWindow.CurrentItemLabel = gameItem.Name;
-        P.MainWindow.CurrentItemIcon = Service.Texture.GetFromGameIcon(new GameIconLookup(gameItem.InGame.Icon))!;
-        var requestIdentity = GetRequestIdentity(requestedScope);
-        gameItem.Observations.Remember(gameItem.CachedRequestIdentity, gameItem.UniversalisResponse);
-        var retained = gameItem.Observations.Find(requestIdentity);
+        gameItem = gameItem.Snapshot();
+
+        var requestIdentity = request.Key.TargetScope;
+        if (requestIdentity != GetRequestIdentity(requestedScope)) return;
+        UniversalisResponse? retained = null;
+        Publish(request, () =>
+        {
+            gameItem.Observations.Remember(gameItem.CachedRequestIdentity, gameItem.UniversalisResponse);
+            retained = gameItem.Observations.Find(requestIdentity);
+        });
         if (retained != null)
         {
             gameItem.UniversalisResponse = retained;
@@ -170,16 +292,35 @@ public sealed class MarketRefreshService
             gameItem.WorldOutOfDate = retained.WorldOutOfDate;
             gameItem.AvgPrice = retained.AveragePrice;
         }
+        if (gameItem.CachedRequestIdentity != requestIdentity)
+        {
+            // Preserve other scope observations in their cache, never under this request's label.
+            gameItem.UniversalisResponse = new();
+            gameItem.WorldOutOfDate = [];
+            gameItem.AvgPrice = 0;
+        }
+        Publish(request, () =>
+        {
+            gameItem.UniversalisResponse = gameItem.UniversalisResponse.Snapshot();
+            MarketProvisionalListingPolicy.ExpireDisplayedQualifications(gameItem.UniversalisResponse,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            P.MainWindow.CurrentItemUpdate(gameItem);
+        });
         if (MarketRefetchPolicy.CanReuse(P.Config.ListingRefetch, P.Config.ListingRefetchAgeSeconds,
                 gameItem.UniversalisResponse.FetchTime, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
                 gameItem.UniversalisResponse.Status == UniversalisResponseStatus.Success,
                 gameItem.CachedRequestIdentity == requestIdentity, forceRefresh))
         {
             gameItem.TargetRegion = requestedScope;
-            P.MainWindow.ShowCachedMarketData(gameItem.Name);
-            P.MainWindow.CurrentItemUpdate(gameItem);
-            SearchHistoryUpdate(gameItem);
-            PublishPriceNotifications(gameItem);
+            Publish(request, () =>
+            {
+                gameItem.UniversalisResponse = gameItem.UniversalisResponse.Snapshot();
+                MarketProvisionalListingPolicy.ExpireDisplayedQualifications(gameItem.UniversalisResponse,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                P.MainWindow.ShowCachedMarketData(gameItem.Name);
+                P.MainWindow.CurrentItemUpdate(gameItem);
+                PublishFirst(request, gameItem);
+            });
             await ReconcileProvisionalAsync(request, gameItem, MarketRefreshVocabulary.Create(
                 P.Config.HolidaySpirit, DateOnly.FromDateTime(DateTime.Now)));
             return;
@@ -189,29 +330,27 @@ public sealed class MarketRefreshService
         var vocabulary = MarketRefreshVocabulary.Create(
             P.Config.HolidaySpirit,
             DateOnly.FromDateTime(DateTime.Now));
-        P.MainWindow.BeginMarketDataRefresh(
+        Publish(request, () => P.MainWindow.BeginMarketDataRefresh(
             gameItem.Name,
-            vocabulary.Preparing(gameItem.Name));
+            vocabulary.Preparing(gameItem.Name)));
         var universalisResponse = await P.Universalis.GetDataAsync(
             gameItem,
             request.Cancellation.Token,
-            progress =>
-            {
-                if (requestCoordinator.IsCurrent(request))
-                    P.MainWindow.UpdateMarketDataRefresh(progress.StatusText, progress.Progress);
-            },
+            progress => ReportProgress(request, progress),
             requireCurrentDetails,
-            vocabulary);
+            vocabulary,
+            onDetails: PublishDetails);
         request.Cancellation.Token.ThrowIfCancellationRequested();
-        if (!requestCoordinator.IsCurrent(request))
+        if (!requestCoordinator.IsCurrent(request) || requestIdentity != GetRequestIdentity(requestedScope))
             return;
 
-        P.MainWindow.UpdateMarketDataRefresh(
-            vocabulary.Processing(gameItem.Name),
-            0.90f);
+        Publish(request, () => P.MainWindow.UpdateMarketDataRefresh(
+            vocabulary.Processing(gameItem.Name), 0.90f));
 
         if (universalisResponse.Status != UniversalisResponseStatus.Success)
         {
+            Publish(request, () =>
+            {
             var failureText = GetUniversalisFailureText(universalisResponse);
             var hasPreviousData = gameItem.UniversalisResponse.Status == UniversalisResponseStatus.Success
                                   && gameItem.UniversalisResponse.FetchTime > 0;
@@ -231,36 +370,57 @@ public sealed class MarketRefreshService
             P.MainWindow.FailMarketDataRefresh(
                 failureText,
                 vocabulary.Failure(failureText));
+            });
+            await ReconcileProvisionalAsync(request, gameItem, vocabulary);
             return;
         }
 
-        gameItem.UniversalisResponse = universalisResponse;
-        // A setting changed during the await must not label a mixed request as reusable.
-        gameItem.CachedRequestIdentity = requestIdentity == GetRequestIdentity(requestedScope) ? requestIdentity : "";
-        gameItem.Observations.Remember(gameItem.CachedRequestIdentity, universalisResponse);
-        gameItem.WorldOutOfDate = universalisResponse.WorldOutOfDate;
-        gameItem.AvgPrice = universalisResponse.AveragePrice;
+        Publish(request, () =>
+        {
+            if (requestIdentity != GetRequestIdentity(requestedScope)) return;
+            gameItem.UniversalisResponse = universalisResponse;
+            // A setting changed during the await must not label a mixed request as reusable.
+            gameItem.CachedRequestIdentity = requestIdentity == GetRequestIdentity(requestedScope) ? requestIdentity : "";
+            gameItem.Observations.Remember(gameItem.CachedRequestIdentity, universalisResponse);
+            gameItem.WorldOutOfDate = universalisResponse.WorldOutOfDate;
+            gameItem.AvgPrice = universalisResponse.AveragePrice;
 
-        PublishPriceNotifications(gameItem);
-
-        P.MainWindow.CurrentItemUpdate(gameItem);
-        SearchHistoryUpdate(gameItem);
-        var duplicateLimited = universalisResponse.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited;
-        var completionText = universalisResponse.ProvisionalWorlds.Count > 0
-            ? MarketProvisionalListingPolicy.Summary(universalisResponse)
-            : MarketListingDataPolicy.CompletionSummary(universalisResponse, gameItem.Name)
-              ?? (universalisResponse.DeferredWorlds.Count > 0 || duplicateLimited
-            ? vocabulary.PartiallyConfirmed(
+            P.MainWindow.CurrentItemUpdate(gameItem);
+            PublishFirst(request, gameItem);
+            var duplicateLimited = universalisResponse.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited;
+            var completionText = universalisResponse.NeedsQualification
+                ? MarketProvisionalListingPolicy.Summary(universalisResponse)
+                : MarketListingDataPolicy.CompletionSummary(universalisResponse, gameItem.Name)
+                  ?? (universalisResponse.DeferredWorlds.Count > 0 || duplicateLimited
+                ? vocabulary.PartiallyConfirmed(
+                    gameItem.Name,
+                    universalisResponse.DeferredWorlds.Keys.ToArray(),
+                    universalisResponse.Listings.Count,
+                    universalisResponse.RequestedListingCount,
+                    duplicateLimited)
+                : vocabulary.Confirmed(gameItem.Name));
+            P.MainWindow.CompleteMarketDataRefresh(
                 gameItem.Name,
-                universalisResponse.DeferredWorlds.Keys.ToArray(),
-                universalisResponse.Listings.Count,
-                universalisResponse.RequestedListingCount,
-                duplicateLimited)
-            : vocabulary.Confirmed(gameItem.Name));
-        P.MainWindow.CompleteMarketDataRefresh(
-            gameItem.Name,
-            completionText);
+                completionText);
+        });
         await ReconcileProvisionalAsync(request, gameItem, vocabulary);
+
+        void PublishDetails(UniversalisResponse response)
+        {
+            Publish(request, () =>
+            {
+                if (requestIdentity != GetRequestIdentity(requestedScope)) return;
+                gameItem.UniversalisResponse = response;
+                gameItem.CachedRequestIdentity = requestIdentity;
+                gameItem.WorldOutOfDate = response.WorldOutOfDate;
+                gameItem.AvgPrice = response.AveragePrice;
+                gameItem.Observations.Remember(requestIdentity, response);
+                P.MainWindow.CurrentItemUpdate(gameItem);
+                PublishFirst(request, gameItem);
+                P.MainWindow.CompleteMarketDataRefresh(gameItem.Name, response.NeedsQualification
+                    ? MarketProvisionalListingPolicy.Summary(response) : vocabulary.Confirmed(gameItem.Name));
+            });
+        }
     }
 
     private async Task ReconcileProvisionalAsync(
@@ -269,26 +429,30 @@ public sealed class MarketRefreshService
         MarketRefreshVocabulary vocabulary)
     {
         request.IsReconciling = true;
-        while (gameItem.UniversalisResponse.ProvisionalWorlds.Count > 0)
+        var retry = 0;
+        while (gameItem.UniversalisResponse.NeedsListingReconciliation
+               || gameItem.UniversalisResponse.HistoryPending
+               || gameItem.UniversalisResponse.HistoryFailure.Length > 0)
         {
-            await Task.Delay(MarketProvisionalListingPolicy.NextRecheckDelay(
-                gameItem.UniversalisResponse, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()), request.Cancellation.Token);
-            if (!requestCoordinator.IsCurrent(request))
+            await Task.Delay(TimeSpan.FromSeconds(Math.Min(300, 30 * Math.Pow(2, Math.Min(retry++, 4)))),
+                request.Cancellation.Token);
+            if (!requestCoordinator.IsCurrent(request)
+                || request.Key.TargetScope != GetRequestIdentity(gameItem.TargetRegion))
                 return;
             ExpireDisplayedQualifications();
 
             UniversalisResponse response;
             using var recheck = CancellationTokenSource.CreateLinkedTokenSource(request.Cancellation.Token);
-            recheck.CancelAfter(MarketProvisionalListingPolicy.NextRecheckDelay(
-                gameItem.UniversalisResponse, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()));
+            recheck.CancelAfter(P.Universalis.ReconciliationAttemptTimeout(gameItem));
             try
             {
                 var reconciliationIdentity = GetRequestIdentity(gameItem.TargetRegion);
                 if (gameItem.CachedRequestIdentity != reconciliationIdentity)
                     gameItem.CachedRequestIdentity = "";
-                response = await P.Universalis.GetDataAsync(
-                    gameItem, recheck.Token, requireCurrentDetails: true,
+                var attempt = P.Universalis.GetDataAsync(
+                    gameItem.Snapshot(), recheck.Token, requireCurrentDetails: true,
                     vocabulary: vocabulary, reconcileProvisionalOnly: true);
+                response = await attempt;
                 if (reconciliationIdentity != GetRequestIdentity(gameItem.TargetRegion))
                     gameItem.CachedRequestIdentity = "";
             }
@@ -304,7 +468,8 @@ public sealed class MarketRefreshService
                 continue;
             }
             request.Cancellation.Token.ThrowIfCancellationRequested();
-            if (!requestCoordinator.IsCurrent(request))
+            if (!requestCoordinator.IsCurrent(request)
+                || request.Key.TargetScope != GetRequestIdentity(gameItem.TargetRegion))
                 return;
             ExpireDisplayedQualifications();
             if (response.Status != UniversalisResponseStatus.Success)
@@ -313,31 +478,44 @@ public sealed class MarketRefreshService
                 continue;
             }
 
-            MarketProvisionalListingPolicy.ExpireDisplayedQualifications(response, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-            gameItem.UniversalisResponse = response;
-            gameItem.Observations.Remember(gameItem.CachedRequestIdentity, response);
-            gameItem.WorldOutOfDate = response.WorldOutOfDate;
-            gameItem.AvgPrice = response.AveragePrice;
-            P.MainWindow.CurrentItemUpdate(gameItem);
-            P.MainWindow.CompleteMarketDataRefresh(gameItem.Name,
-                response.ProvisionalWorlds.Count > 0
-                    ? MarketProvisionalListingPolicy.Summary(response)
-                    : MarketListingDataPolicy.CompletionSummary(response, gameItem.Name)
-                      ?? vocabulary.PartiallyConfirmed(gameItem.Name, response.DeferredWorlds.Keys.ToArray(),
-                        response.Listings.Count, response.RequestedListingCount,
-                        response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited));
-            Service.Log.Info($"[MarketRefresh] Background corroboration: {response.ProvisionalWorlds.Count} provisional, {response.DeferredWorlds.Count} deferred world(s).");
+            Publish(request, () =>
+            {
+                if (request.Key.TargetScope != GetRequestIdentity(gameItem.TargetRegion)) return;
+                MarketProvisionalListingPolicy.ExpireDisplayedQualifications(response, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                gameItem.UniversalisResponse = response;
+                gameItem.Observations.Remember(gameItem.CachedRequestIdentity, response);
+                gameItem.WorldOutOfDate = response.WorldOutOfDate;
+                gameItem.AvgPrice = response.AveragePrice;
+                P.MainWindow.CurrentItemUpdate(gameItem);
+                PublishFirst(request, gameItem);
+                P.MainWindow.CompleteMarketDataRefresh(gameItem.Name,
+                    response.NeedsQualification
+                        ? MarketProvisionalListingPolicy.Summary(response)
+                        : MarketListingDataPolicy.CompletionSummary(response, gameItem.Name)
+                          ?? vocabulary.PartiallyConfirmed(gameItem.Name, response.DeferredWorlds.Keys.ToArray(),
+                            response.Listings.Count, response.RequestedListingCount,
+                            response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited));
+                Service.Log.Info($"[MarketRefresh] Background corroboration: {response.ProvisionalWorlds.Count} provisional, {response.DeferredWorlds.Count} deferred world(s).");
+            });
         }
 
         void ExpireDisplayedQualifications()
         {
-            if (!requestCoordinator.IsCurrent(request)
-                || !MarketProvisionalListingPolicy.ExpireDisplayedQualifications(
-                    gameItem.UniversalisResponse, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
-                return;
-            P.MainWindow.CurrentItemUpdate(gameItem);
-            P.MainWindow.CompleteMarketDataRefresh(gameItem.Name,
-                MarketProvisionalListingPolicy.Summary(gameItem.UniversalisResponse));
+            Publish(request, () =>
+            {
+                if (request.Key.TargetScope != GetRequestIdentity(gameItem.TargetRegion)) return;
+                var snapshot = gameItem.UniversalisResponse.Snapshot();
+                if (!requestCoordinator.IsCurrent(request)
+                    || !MarketProvisionalListingPolicy.ExpireDisplayedQualifications(
+                        snapshot, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()))
+                    return;
+                gameItem.UniversalisResponse = snapshot;
+                gameItem.Observations.Remember(gameItem.CachedRequestIdentity, snapshot);
+                P.MainWindow.CurrentItemUpdate(gameItem);
+                PublishFirst(request, gameItem);
+                P.MainWindow.CompleteMarketDataRefresh(gameItem.Name,
+                    MarketProvisionalListingPolicy.Summary(gameItem.UniversalisResponse));
+            });
         }
     }
 
@@ -370,7 +548,7 @@ public sealed class MarketRefreshService
     {
         SearchHistoryClean();
         GameItemCacheList.RemoveAll(i => i.Id == gameItem.Id);
-        GameItemCacheList.Insert(0, gameItem);
+        GameItemCacheList.Insert(0, gameItem.Snapshot());
     }
 
     public void SearchHistoryClean()
@@ -391,15 +569,30 @@ public sealed class MarketRefreshService
 
 
     // -------------------------------- notification --------------------------------
-    private void PublishPriceNotifications(MarketItem gameItem)
+    private void PublishPriceNotifications(MarketRefreshRequestContext request, MarketItem gameItem)
     {
         var response = gameItem.UniversalisResponse;
-        if (response.ProvisionalWorlds.Count == 0
+        var historyReady = !response.HistoryPending && response.HistoryFailure.Length == 0;
+        if (response.Status == UniversalisResponseStatus.Success
+            && response.PendingWorlds.Count == 0 && response.ProvisionalWorlds.Count == 0
+            && !response.ListingRefillPending
             && response.WorldsWithoutListingData.Count == 0
             && response.Listings.Count > 0)
         {
-            if (P.Config.EnableChatLog) SendChatMessage(gameItem);
-            if (P.Config.EnableToastLog) SendToast(gameItem);
+            if (P.Config.EnableChatLog && !request.ChatNotificationPublished
+                && (P.Config.priceToPrint == PriceDisplayMode.SellingLow || historyReady)
+                && (P.Config.priceToPrint != PriceDisplayMode.SoldLow || response.Entries.Count > 0))
+            {
+                request.ChatNotificationPublished = true;
+                SendChatMessage(gameItem);
+            }
+            // Toasts retain their existing average-price policy, independently of chat mode.
+            if (P.Config.EnableToastLog && !request.ToastNotificationPublished && historyReady
+                && (P.Config.priceToPrint != PriceDisplayMode.SoldLow || response.Entries.Count > 0))
+            {
+                request.ToastNotificationPublished = true;
+                SendToast(gameItem);
+            }
         }
     }
 

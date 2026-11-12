@@ -1,4 +1,5 @@
 using System.Threading;
+using ComplicatedMarketBoard.Integrations.Universalis;
 
 namespace ComplicatedMarketBoard.Market;
 
@@ -13,6 +14,12 @@ public sealed record MarketRefreshRequestContext(
     CancellationTokenSource Cancellation)
 {
     public bool IsReconciling { get; set; }
+    public volatile bool HasPublished;
+    public UniversalisRequestProgress? LatestProgress;
+    public int ProgressQueued;
+    public bool ChatNotificationPublished { get; set; }
+    public bool ToastNotificationPublished { get; set; }
+    public CancellationTokenSource? EligibilityTimer { get; set; }
 }
 
 public sealed class MarketRefreshRequestCoordinator : IDisposable
@@ -54,10 +61,13 @@ public sealed class MarketRefreshRequestCoordinator : IDisposable
     {
         lock (requestLock)
         {
+            request.Cancellation.Cancel();
             if (request.Version == requestVersion)
                 activeRequest = null;
         }
 
+        request.EligibilityTimer?.Cancel();
+        request.EligibilityTimer?.Dispose();
         request.Cancellation.Dispose();
     }
 

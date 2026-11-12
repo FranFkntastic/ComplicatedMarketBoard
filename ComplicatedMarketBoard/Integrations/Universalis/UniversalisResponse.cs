@@ -27,6 +27,33 @@ public enum MarketListingCoverageStatus
 /// </summary>
 public class UniversalisResponse
 {
+    public HashSet<string> PendingWorlds { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public bool HistoryPending { get; set; }
+    public string HistoryFailure { get; set; } = "";
+    public bool ListingRefillPending { get; set; }
+    public bool NeedsListingReconciliation => PendingWorlds.Count > 0 || ProvisionalWorlds.Count > 0 || ListingRefillPending;
+    // Preserve the original custom-target weighting when retrying only sales history.
+    public Dictionary<string, int> HistoryListingWeights { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public bool NeedsQualification => NeedsListingReconciliation
+        || DeferredWorlds.Count > 0 || HistoryPending || HistoryFailure.Length > 0;
+
+    // Workers own mutable assembly state; published collections are never shared with it.
+    public UniversalisResponse Snapshot()
+    {
+        var copy = (UniversalisResponse)MemberwiseClone();
+        copy.Listings = Listings.ToList();
+        copy.Entries = Entries.ToList();
+        copy.PendingWorlds = new(PendingWorlds, StringComparer.OrdinalIgnoreCase);
+        copy.ProvisionalWorlds = new(ProvisionalWorlds, StringComparer.OrdinalIgnoreCase);
+        copy.DeferredWorlds = new(DeferredWorlds, StringComparer.OrdinalIgnoreCase);
+        copy.WorldsWithoutListingData = new(WorldsWithoutListingData, StringComparer.OrdinalIgnoreCase);
+        copy.WorldOutOfDate = new(WorldOutOfDate);
+        copy.WorldUploadTimes = new(WorldUploadTimes);
+        copy.VerificationProbes = VerificationProbes.ToArray();
+        copy.HistoryListingWeights = new(HistoryListingWeights, StringComparer.OrdinalIgnoreCase);
+        return copy;
+    }
+
     public ulong Status { get; set; }
 
     /// <summary>

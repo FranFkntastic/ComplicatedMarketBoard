@@ -18,6 +18,7 @@ public static class MarketListingReconciler
             var retainedUploadTime = 0L;
             if (previous is not null
                 && !previous.ProvisionalWorlds.ContainsKey(deferred.Key)
+                && !previous.PendingWorlds.Contains(deferred.Key)
                 && !previous.WorldsWithoutListingData.Contains(deferred.Key)
                 && previous.WorldUploadTimes.TryGetValue(deferred.Key, out retainedUploadTime))
             {
@@ -59,14 +60,16 @@ public static class MarketListingReconciler
             .Take(Math.Max(0, listingLimit))
             .ToList();
         listings.UnitsForSale = listings.Listings.Sum(listing => listing.Quantity);
-        listings.Entries = history.Entries;
+        listings.Entries = history.Entries.ToList();
+        listings.HistoryListingWeights = new(history.HistoryListingWeights, StringComparer.OrdinalIgnoreCase);
+        listings.HistoryPending = history.HistoryPending;
+        listings.HistoryFailure = history.HistoryFailure;
         listings.AveragePrice = history.AveragePrice;
         listings.AveragePriceNq = history.AveragePriceNq;
         listings.AveragePriceHq = history.AveragePriceHq;
         listings.Velocity = history.Velocity;
         listings.VelocityNq = history.VelocityNq;
         listings.VelocityHq = history.VelocityHq;
-        listings.FetchTime = Math.Max(listings.FetchTime, history.FetchTime);
         return listings;
     }
 
