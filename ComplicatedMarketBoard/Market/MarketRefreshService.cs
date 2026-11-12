@@ -575,6 +575,7 @@ public sealed class MarketRefreshService
         var historyReady = !response.HistoryPending && response.HistoryFailure.Length == 0;
         if (response.Status == UniversalisResponseStatus.Success
             && response.PendingWorlds.Count == 0 && response.ProvisionalWorlds.Count == 0
+            && response.VerificationProbes.Any(probe => !response.DeferredWorlds.ContainsKey(probe.TargetName))
             && !response.ListingRefillPending
             && response.WorldsWithoutListingData.Count == 0
             && response.Listings.Count > 0)
