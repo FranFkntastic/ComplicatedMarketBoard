@@ -19,7 +19,7 @@ public partial class MainWindow
             ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
         ImGui.SetCursorPosY(ImGui.GetCursorPosY() - 0.2f * spacing.Y);
 
-        if (RefreshInProgress && CurrentItem.UniversalisResponse.ProvisionalWorlds.Count == 0)
+        if (RefreshInProgress)
         {
             var elapsed = FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - RefreshStartedAt);
             ImGui.ProgressBar(
@@ -49,7 +49,7 @@ public partial class MainWindow
         if (response.FetchTime == 0)
             return Ui.ColourWhite3;
 
-        if (response.ProvisionalWorlds.Count > 0 || response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited)
+        if (response.NeedsQualification || response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited)
             return Ui.ColourHq;
 
         return Ui.ColourCyan;
@@ -68,8 +68,8 @@ public partial class MainWindow
             return "Market data not loaded";
 
         var fetchedAgo = FormatDuration(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - response.FetchTime);
-        if (response.ProvisionalWorlds.Count > 0)
-            return $"{RefreshStatusText}; ~ provisional / ! uncorroborated";
+        if (response.NeedsQualification)
+            return Market.MarketProvisionalListingPolicy.Summary(response);
         var summary = string.IsNullOrWhiteSpace(RefreshStatusText)
             ? "Market data refreshed"
             : RefreshStatusText;
@@ -116,11 +116,14 @@ public partial class MainWindow
             : "";
         var confidence = response.ProvisionalWorlds.Count > 0
             ? $"Provisional worlds: {string.Join(", ", response.ProvisionalWorlds.Keys)}\n" +
-              "~ marks recent provisional prices; ! means the upload window elapsed without corroboration.\n" +
+              "Amber rows are recent provisional or uncorroborated after the upload window elapsed.\n" +
               "These are exact returned rows; price or availability may have changed.\n" +
               "CMB rechecks automatically; the cheapest result may be provisional.\n"
             : "";
-        confidence = noData + confidence;
+        confidence = noData + (response.PendingWorlds.Count > 0
+            ? $"Pending verification: {string.Join(", ", response.PendingWorlds)}. Amber rows are exact observations, not confirmed prices; CMB retries automatically.\n"
+            : "") + confidence + (response.HistoryPending ? "Sales history pending.\n"
+            : response.HistoryFailure.Length > 0 ? "Sales history unavailable; retrying automatically.\n" : "");
         var listingCoverage = response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited
             ? $"Listing coverage: {response.Listings.Count} of {response.RequestedListingCount} requested (Universalis repeated rows)"
             : $"Listings: {response.Listings.Count}";
@@ -148,7 +151,7 @@ public partial class MainWindow
             $"Stalest market: {oldest.Key} ({oldest.Value:F2} hrs)\n" +
             $"Worlds: {response.WorldOutOfDate.Count}\n" +
             $"{listingCoverage}\n" +
-            $"Recent sales: {response.Entries.Count}";
+            (response.HistoryPending || response.HistoryFailure.Length > 0 ? "Recent sales incomplete" : $"Recent sales: {response.Entries.Count}");
     }
 
     private static string GetUniversalisStatusLabel(ulong status) => status switch
