@@ -259,14 +259,7 @@ if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and -not $commit.StartsW
 
 $dependency = & (Join-Path $PSScriptRoot 'Test-FranthropyDependency.ps1') -FranthropyDalamudProject $FranthropyDalamudProject | ConvertFrom-Json
 $franthropy = Join-Path $workspace 'Franthropy'
-$dependencyDirty = & git -C $franthropy status --porcelain=v1 --untracked-files=all
-if ($LASTEXITCODE -ne 0 -or $dependencyDirty) {
-    throw 'Franthropy checkout must be available and clean before deployment.'
-}
-& git -C $franthropy merge-base --is-ancestor HEAD origin/main
-if ($LASTEXITCODE -ne 0) {
-    throw "Franthropy HEAD is not published on origin/main."
-}
+# Package identity comes from the pin, not the sibling checkout's mutable HEAD or worktree.
 & git -C $franthropy merge-base --is-ancestor $dependency.Commit origin/main
 if ($LASTEXITCODE -ne 0) { throw 'Pinned Franthropy package commit is not published on origin/main.' }
 
