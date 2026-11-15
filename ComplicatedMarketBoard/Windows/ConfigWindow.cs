@@ -1,3 +1,4 @@
+using Franthropy.Dalamud.UI.Inputs;
 using Dalamud.Game.ClientState.Keys;
 using Dalamud.Game.Text;
 using Dalamud.Interface.Components;
@@ -529,7 +530,7 @@ public class ConfigWindow : Window, IDisposable
         {
             var ageSeconds = MarketRefetchPolicy.NormalizeAge(P.Config.ListingRefetchAgeSeconds);
             ImGui.SetNextItemWidth(250);
-            if (ImGui.InputInt($"Reuse age (seconds){suffix}ListingRefetchAge", ref ageSeconds))
+            if (DalamudGroupedIntegerInput.InputGroupedInt($"Reuse age (seconds){suffix}ListingRefetchAge", ref ageSeconds, 1, 100))
             {
                 P.Config.ListingRefetchAgeSeconds = MarketRefetchPolicy.NormalizeAge(ageSeconds);
                 P.Config.Save();
@@ -550,7 +551,7 @@ public class ConfigWindow : Window, IDisposable
         ImGui.NextColumn();
         var RequestTimeout = P.Config.RequestTimeout;
         ImGui.SetNextItemWidth(col_value_content_width);
-        if (ImGui.InputInt($"{suffix}RequestTimeout", ref RequestTimeout))
+        if (DalamudGroupedIntegerInput.InputGroupedInt($"{suffix}RequestTimeout", ref RequestTimeout, 1, 100))
         {
             P.Config.RequestTimeout = RequestTimeout;
             P.Universalis.ReloadHttpClient();
@@ -584,7 +585,7 @@ public class ConfigWindow : Window, IDisposable
         ImGui.NextColumn();
         var requestSpacing = P.Config.UniversalisRequestSpacingMilliseconds;
         ImGui.SetNextItemWidth(col_value_content_width);
-        if (ImGui.InputInt($"{suffix}UniversalisRequestSpacingMilliseconds", ref requestSpacing, 50, 100))
+        if (DalamudGroupedIntegerInput.InputGroupedInt($"{suffix}UniversalisRequestSpacingMilliseconds", ref requestSpacing, 50, 100))
         {
             P.Config.UniversalisRequestSpacingMilliseconds = UniversalisRequestPacer.Normalize(requestSpacing);
             P.Config.Save();
@@ -602,7 +603,7 @@ public class ConfigWindow : Window, IDisposable
         ImGui.NextColumn();
         var UniversalisListings = P.Config.UniversalisListings;
         ImGui.SetNextItemWidth(col_value_content_width);
-        if (ImGui.InputInt($"{suffix}UniversalisListings", ref UniversalisListings))
+        if (DalamudGroupedIntegerInput.InputGroupedInt($"{suffix}UniversalisListings", ref UniversalisListings, 1, 100))
         {
             P.Config.UniversalisListings = UniversalisListings;
             P.Config.Save();
@@ -619,7 +620,7 @@ public class ConfigWindow : Window, IDisposable
         ImGui.NextColumn();
         var UniversalisEntries = P.Config.UniversalisEntries;
         ImGui.SetNextItemWidth(col_value_content_width);
-        if (ImGui.InputInt($"{suffix}UniversalisEntries", ref UniversalisEntries))
+        if (DalamudGroupedIntegerInput.InputGroupedInt($"{suffix}UniversalisEntries", ref UniversalisEntries, 1, 100))
         {
             P.Config.UniversalisEntries = UniversalisEntries;
             P.Config.Save();
@@ -776,7 +777,7 @@ public class ConfigWindow : Window, IDisposable
         ImGui.SameLine();
         var soldTableOffset = P.Config.soldTableOffset;
         ImGui.SetNextItemWidth(col_value_content_width);
-        if (ImGui.InputInt($"{suffix}soldTableOffset", ref soldTableOffset))
+        if (DalamudGroupedIntegerInput.InputGroupedInt($"{suffix}soldTableOffset", ref soldTableOffset, 1, 100))
         {
             P.Config.soldTableOffset = soldTableOffset;
             P.Config.Save();
@@ -916,7 +917,7 @@ public class ConfigWindow : Window, IDisposable
         ImGui.NextColumn();
         var rightColWidth = P.Config.rightColWidth;
         ImGui.SetNextItemWidth(col_value_content_width);
-        if (ImGui.InputInt($"{suffix}rightColWidth", ref rightColWidth))
+        if (DalamudGroupedIntegerInput.InputGroupedInt($"{suffix}rightColWidth", ref rightColWidth, 1, 100))
         {
             P.Config.rightColWidth = rightColWidth;
             P.Config.Save();
