@@ -57,7 +57,10 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         IGameInventory gameInventory,
         IPlayerState playerState,
         IAddonLifecycle addonLifecycle,
-        IPluginLog pluginLog)
+        IPluginLog pluginLog,
+        IFramework framework,
+        IGameInteropProvider gameInterop,
+        ISigScanner sigScanner)
     {
         // PLUGIN
 
@@ -74,6 +77,10 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
                 GameInventory = gameInventory,
                 PlayerState = playerState,
                 AddonLifecycle = addonLifecycle,
+                Framework = framework,
+                InteropProvider = gameInterop,
+                SigScanner = sigScanner,
+                PluginLog = pluginLog,
                 Diagnostic = (message, exception) =>
                 {
                     if (exception is null) pluginLog.Warning(message);
