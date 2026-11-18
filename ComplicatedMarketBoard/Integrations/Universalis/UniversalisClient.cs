@@ -1945,6 +1945,32 @@ public sealed class UniversalisClient
         }
     }
 
+    internal async Task<Dictionary<uint, MarketDataCurrent>> GetCompetitionBatchAsync(
+        string target, uint[] ids, bool hq, int limit, CancellationToken token)
+    {
+        var url = $"{Host}/api/v2/{Uri.EscapeDataString(target)}/{string.Join(",", ids)}?entries=0&hq={(hq ? 1 : 0)}&listings={limit}";
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        using var response = await SendRequestAsync(request, TimeSpan.FromSeconds(P.Config.RequestTimeout), target, 0, null, token);
+        if (IsTransient(response.StatusCode))
+            StartFailureCooldown();
+        response.EnsureSuccessStatusCode();
+        using var json = await response.Content.ReadFromJsonAsync<JsonDocument>(UniversalisJsonOptions, token)
+            ?? throw new JsonException("Empty Universalis response.");
+        var result = new Dictionary<uint, MarketDataCurrent>();
+        var root = json.RootElement;
+        foreach (var id in ids)
+        {
+            var node = root;
+            if (ids.Length > 1 && !root.GetProperty("items").TryGetProperty(id.ToString(), out node))
+                continue;
+            if (node.TryGetProperty("listings", out var rows) && rows.ValueKind == JsonValueKind.Array &&
+                node.Deserialize<MarketDataCurrent>(UniversalisJsonOptions) is { HasData: not false, LastUploadTime: > 0 } item &&
+                item.ItemId == id)
+                result.Add(id, item);
+        }
+        return result;
+    }
+
     private async Task<HttpResponseMessage> SendRequestAsync(
         HttpRequestMessage request,
         TimeSpan timeout,

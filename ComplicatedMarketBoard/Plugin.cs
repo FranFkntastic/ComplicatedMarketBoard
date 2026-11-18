@@ -39,6 +39,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
     public UniversalisClient Universalis { get; set; } = null!;
     public WorldTravelService WorldTravel { get; set; } = null!;
     public Integrations.Mmf.MarketContextIpcProvider MarketContextIpc { get; set; } = null!;
+    private Integrations.CompetitionIpcProvider CompetitionIpc { get; }
     private readonly DalamudSharedObservationHost? sharedObservationHost;
 
     // WINDOWS
@@ -170,6 +171,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         WindowSystem.AddWindow(CustomScopeWindow);
         WindowSystem.AddWindow(MainWindow);
         WindowSystem.AddWindow(ChartsWindow);
+        CompetitionIpc = new Integrations.CompetitionIpcProvider();
 
 
         // HANDLERS
@@ -194,6 +196,7 @@ public sealed class ComplicatedMarketBoardPlugin : IDalamudPlugin
         // unload modules
         HoverSearch.Dispose();
         MarketRefresh.Dispose();
+        CompetitionIpc.Dispose();
         Universalis.Dispose();
         MarketContextIpc.Dispose();
         sharedObservationHost?.Dispose();
