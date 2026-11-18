@@ -874,6 +874,16 @@ public partial class MainWindow : Window, IDisposable
             .ToList();
     }
 
+    internal bool OpenSearchItem(uint itemId)
+    {
+        var result = SearchableItems.Find(item => item.Id == itemId);
+        if (result is null) return false;
+        SearchItem(result);
+        IsOpen = true;
+        BringToFront();
+        return true;
+    }
+
     private void SearchItem(ItemSearchResult result)
     {
         itemSearchText = result.Name;
