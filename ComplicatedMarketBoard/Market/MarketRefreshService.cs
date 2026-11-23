@@ -140,7 +140,7 @@ public sealed class MarketRefreshService
         Service.Log.Debug($"[MarketRefresh] Start item lookup: {itemId}");
         var requestedScope = P.MainWindow.GetSelectedMarketScopeLabel();
         var request = requestCoordinator.TryBeginCoalesced(
-            new MarketRefreshRequestKey(itemId, GetRequestIdentity(requestedScope), RequireCurrentDetails: true));
+            new MarketRefreshRequestKey(itemId, GetRequestIdentity(requestedScope), RequireCurrentDetails: P.Config.RequireCurrentListingDetails));
         if (request is null) return;
         var cachedGameItem = GameItemCacheList.FirstOrDefault(i => i.Id == itemId)?.Snapshot();
         if (cachedGameItem is not null && cachedGameItem.CachedRequestIdentity == request.Key.TargetScope)
@@ -186,7 +186,7 @@ public sealed class MarketRefreshService
         if (cached_gameItem is not null)
         {
             Service.Log.Debug($"[MarketRefresh] {itemId} found in cache.");
-            await CheckGameItemAsync(request, cached_gameItem, requestedScope, requireCurrentDetails: true);
+            await CheckGameItemAsync(request, cached_gameItem, requestedScope, requireCurrentDetails: request.Key.RequireCurrentDetails);
             return;
         }
 
@@ -218,7 +218,7 @@ public sealed class MarketRefreshService
             gameItem.VendorSelling = gameItem.InGame.PriceMid;
         }
 
-        await CheckGameItemAsync(request, gameItem, requestedScope, requireCurrentDetails: true);
+        await CheckGameItemAsync(request, gameItem, requestedScope, requireCurrentDetails: request.Key.RequireCurrentDetails);
     }
 
     public void DoCheckRefreshAsync(MarketItem gameItem)
@@ -227,7 +227,7 @@ public sealed class MarketRefreshService
     private void BeginRefresh(MarketItem gameItem)
     {
         var requestedScope = P.MainWindow.GetSelectedMarketScopeLabel();
-        var requestKey = new MarketRefreshRequestKey(gameItem.Id, GetRequestIdentity(requestedScope), RequireCurrentDetails: true);
+        var requestKey = new MarketRefreshRequestKey(gameItem.Id, GetRequestIdentity(requestedScope), RequireCurrentDetails: P.Config.RequireCurrentListingDetails);
         var request = requestCoordinator.TryBeginCoalesced(requestKey);
         if (request is null)
         {
@@ -243,7 +243,7 @@ public sealed class MarketRefreshService
             try
             {
                 Interlocked.Increment(ref P.MainWindow.LoadingQueue);
-                await CheckGameItemAsync(request, gameItem, requestedScope, requireCurrentDetails: true, forceRefresh: true);
+                await CheckGameItemAsync(request, gameItem, requestedScope, requireCurrentDetails: request.Key.RequireCurrentDetails, forceRefresh: true);
             }
             catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { }
             catch (Exception ex)
@@ -339,7 +339,8 @@ public sealed class MarketRefreshService
             progress => ReportProgress(request, progress),
             requireCurrentDetails,
             vocabulary,
-            onDetails: PublishDetails);
+            onDetails: PublishDetails,
+            userInitiated: forceRefresh);
         request.Cancellation.Token.ThrowIfCancellationRequested();
         if (!requestCoordinator.IsCurrent(request) || requestIdentity != GetRequestIdentity(requestedScope))
             return;
@@ -429,20 +430,40 @@ public sealed class MarketRefreshService
         MarketRefreshVocabulary vocabulary)
     {
         request.IsReconciling = true;
+        using var stop = CancellationTokenSource.CreateLinkedTokenSource(request.Cancellation.Token);
+        request.ReconcileStop = stop;
         var retry = 0;
         while (gameItem.UniversalisResponse.NeedsListingReconciliation
                || gameItem.UniversalisResponse.HistoryPending
                || gameItem.UniversalisResponse.HistoryFailure.Length > 0)
         {
-            await Task.Delay(TimeSpan.FromSeconds(Math.Min(300, 30 * Math.Pow(2, Math.Min(retry++, 4)))),
-                request.Cancellation.Token);
+            var giveUpReason = retry >= MaxReconcileAttempts
+                ? $"gave up after {MaxReconcileAttempts} attempts"
+                : ProvisionalWindowElapsed(gameItem.UniversalisResponse)
+                    ? "provisional window elapsed"
+                    : null;
+            if (giveUpReason is not null)
+            {
+                GiveUp(giveUpReason);
+                return;
+            }
+            try
+            {
+                await Task.Delay(TimeSpan.FromSeconds(Math.Min(300, 30 * Math.Pow(2, Math.Min(retry++, 4)))),
+                    stop.Token);
+            }
+            catch (OperationCanceledException) when (!request.Cancellation.IsCancellationRequested)
+            {
+                GiveUp("stopped by user");
+                return;
+            }
             if (!requestCoordinator.IsCurrent(request)
                 || request.Key.TargetScope != GetRequestIdentity(gameItem.TargetRegion))
                 return;
             ExpireDisplayedQualifications();
 
             UniversalisResponse response;
-            using var recheck = CancellationTokenSource.CreateLinkedTokenSource(request.Cancellation.Token);
+            using var recheck = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
             recheck.CancelAfter(P.Universalis.ReconciliationAttemptTimeout(gameItem));
             try
             {
@@ -498,6 +519,21 @@ public sealed class MarketRefreshService
                 Service.Log.Info($"[MarketRefresh] Background corroboration: {response.ProvisionalWorlds.Count} provisional, {response.DeferredWorlds.Count} deferred world(s).");
             });
         }
+        request.ReconcileStop = null;
+
+        // Accept the displayed rows as they are: keep them, stop retrying, and let
+        // notifications fire on what we have.
+        void GiveUp(string reason)
+        {
+            request.ReconcileStop = null;
+            Service.Log.Warning($"[MarketRefresh] Stopped background corroboration for {gameItem.Name} ({reason}); keeping the displayed results as is.");
+            Publish(request, () =>
+            {
+                P.MainWindow.CompleteMarketDataRefresh(gameItem.Name,
+                    $"{MarketProvisionalListingPolicy.Summary(gameItem.UniversalisResponse)} · {reason}");
+                PublishPriceNotifications(request, gameItem, givenUp: true);
+            });
+        }
 
         void ExpireDisplayedQualifications()
         {
@@ -517,6 +553,26 @@ public sealed class MarketRefreshService
                     MarketProvisionalListingPolicy.Summary(gameItem.UniversalisResponse));
             });
         }
+    }
+
+    private const int MaxReconcileAttempts = 6;
+
+    private static bool ProvisionalWindowElapsed(UniversalisResponse response)
+        => response.ProvisionalWorlds.Count > 0
+           && response.ProvisionalWorlds.Values.All(partition => partition.EligibilityExpired)
+           && response.PendingWorlds.Count == 0
+           && !response.ListingRefillPending
+           && !response.HistoryPending
+           && response.HistoryFailure.Length == 0;
+
+    /// <summary>True while the current item is retrying corroboration in the background.</summary>
+    public bool IsReconciling(ulong itemId) => requestCoordinator.ReconcilingRequest(itemId) is not null;
+
+    /// <summary>Accept the displayed results as is and stop background retries.</summary>
+    public void StopReconciling(ulong itemId)
+    {
+        try { requestCoordinator.ReconcilingRequest(itemId)?.ReconcileStop?.Cancel(); }
+        catch (ObjectDisposedException) { }
     }
 
     private static string GetRequestIdentity(string requestedScope)
@@ -569,15 +625,13 @@ public sealed class MarketRefreshService
 
 
     // -------------------------------- notification --------------------------------
-    private void PublishPriceNotifications(MarketRefreshRequestContext request, MarketItem gameItem)
+    // Fires on the first usable result; corroboration state is shown in the window, not gated here.
+    // Once background retries give up, history-dependent prices use whatever history arrived.
+    private void PublishPriceNotifications(MarketRefreshRequestContext request, MarketItem gameItem, bool givenUp = false)
     {
         var response = gameItem.UniversalisResponse;
-        var historyReady = !response.HistoryPending && response.HistoryFailure.Length == 0;
+        var historyReady = givenUp || (!response.HistoryPending && response.HistoryFailure.Length == 0);
         if (response.Status == UniversalisResponseStatus.Success
-            && response.PendingWorlds.Count == 0 && response.ProvisionalWorlds.Count == 0
-            && response.VerificationProbes.Any(probe => !response.DeferredWorlds.ContainsKey(probe.TargetName))
-            && !response.ListingRefillPending
-            && response.WorldsWithoutListingData.Count == 0
             && response.Listings.Count > 0)
         {
             if (P.Config.EnableChatLog && !request.ChatNotificationPublished

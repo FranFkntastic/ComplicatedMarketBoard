@@ -122,26 +122,26 @@ public sealed class MarketContextIpcProvider : IDisposable
         bool highQuality,
         CancellationToken cancellationToken)
     {
-        var homeWorldName = ResolveCurrentWorldName();
-        if (string.IsNullOrWhiteSpace(homeWorldName))
-            return null;
-
+        var requestedQuality = highQuality;
         var itemName = ResolveItemName(itemId);
-        var home = await FetchAsync(itemId, itemName, homeWorldName, highQuality, cancellationToken);
-        if (highQuality && home is { Listings.Count: 0 })
+        var homeWorldName = ResolveCurrentWorldName();
+        UniversalisResponse? home = null;
+        if (!string.IsNullOrWhiteSpace(homeWorldName))
         {
-            highQuality = false;
-            home = await FetchAsync(itemId, itemName, homeWorldName, false, cancellationToken);
+            home = await TryFetchAsync(itemId, itemName, homeWorldName, highQuality, cancellationToken);
+            if (highQuality && home is { Status: UniversalisResponseStatus.Success, Listings.Count: 0 })
+            {
+                highQuality = false;
+                home = await TryFetchAsync(itemId, itemName, homeWorldName, false, cancellationToken);
+            }
         }
-        if (home is null || home.Status != UniversalisResponseStatus.Success)
-            return null;
+        var homeAvailable = home is { Status: UniversalisResponseStatus.Success };
 
         var dataCenterName = ResolveDataCenterName();
         UniversalisResponse? datacenter = null;
         if (!string.IsNullOrWhiteSpace(dataCenterName))
-            datacenter = await FetchAsync(itemId, itemName, dataCenterName, highQuality, cancellationToken);
+            datacenter = await TryFetchAsync(itemId, itemName, dataCenterName, highQuality, cancellationToken);
 
-        var homePrice = home.Listings.Count > 0 ? (uint)home.Listings.Min(listing => listing.PricePerUnit) : (uint?)null;
         string? dcBestWorld = null;
         uint? dcBestPrice = null;
         if (datacenter is { Status: UniversalisResponseStatus.Success, Listings.Count: > 0 })
@@ -151,19 +151,59 @@ public sealed class MarketContextIpcProvider : IDisposable
             dcBestPrice = (uint)best.PricePerUnit;
         }
 
-        var velocity = highQuality ? home.VelocityHq : home.VelocityNq;
-        var trend = highQuality ? home.AveragePriceHq : home.AveragePriceNq;
+        if (homeAvailable)
+        {
+            var homePrice = home!.Listings.Count > 0 ? (uint)home.Listings.Min(listing => listing.PricePerUnit) : (uint?)null;
+            var velocity = highQuality ? home.VelocityHq : home.VelocityNq;
+            var trend = highQuality ? home.AveragePriceHq : home.AveragePriceNq;
+            return new MarketContextResponse(
+                itemId,
+                highQuality,
+                homePrice,
+                dcBestWorld,
+                dcBestPrice,
+                velocity > 0 ? velocity : null,
+                trend > 0 ? trend : null,
+                home.LatestUploadTime,
+                "Universalis");
+        }
 
+        // Home world unavailable: return what we have instead of nothing. A previous home
+        // reading is kept with its original freshness and marked stale.
+        var previous = cache.Get((itemId, requestedQuality));
+        var stale = previous is { Found: true, Value: { } prior } && prior.HomeWorldPrice is not null ? prior : null;
+        if (stale is null && dcBestPrice is null)
+            return null;
+        Service.Log.Warning($"[CMB IPC] GetMarketContext {itemId}: home world data unavailable; returning partial context.");
         return new MarketContextResponse(
             itemId,
-            highQuality,
-            homePrice,
-            dcBestWorld,
-            dcBestPrice,
-            velocity > 0 ? velocity : null,
-            trend > 0 ? trend : null,
-            home.LatestUploadTime,
-            "Universalis");
+            stale?.HighQuality ?? highQuality,
+            stale?.HomeWorldPrice,
+            dcBestWorld ?? stale?.DatacenterBestWorld,
+            dcBestPrice ?? stale?.DatacenterBestPrice,
+            stale?.VelocityPerDay,
+            stale?.TrendAveragePrice,
+            stale?.FreshnessUtcMs ?? datacenter?.LatestUploadTime ?? 0,
+            stale is null ? "Universalis (data center only)" : "Universalis (home stale)");
+    }
+
+    private async Task<UniversalisResponse?> TryFetchAsync(
+        uint itemId,
+        string itemName,
+        string targetRegion,
+        bool highQuality,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            return await FetchAsync(itemId, itemName, targetRegion, highQuality, cancellationToken);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception)
+        {
+            Service.Log.Warning($"[CMB IPC] GetMarketContext fetch for {itemId} on {targetRegion} failed: {exception.Message}");
+            return null;
+        }
     }
 
     private Task<UniversalisResponse> FetchAsync(

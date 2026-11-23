@@ -29,6 +29,15 @@ public partial class MainWindow
         }
         else
         {
+            var reconciling = P.MarketRefresh.IsReconciling(CurrentItem.Id);
+            if (reconciling)
+            {
+                if (ImGui.SmallButton("Stop retrying"))
+                    P.MarketRefresh.StopReconciling(CurrentItem.Id);
+                if (ImGui.IsItemHovered())
+                    ImGui.SetTooltip("Accept these results as is and stop background corroboration retries.");
+                ImGui.SameLine();
+            }
             ImGui.TextColored(GetMarketRefreshStatusColour(), GetMarketRefreshStatusText());
         }
 
@@ -49,7 +58,8 @@ public partial class MainWindow
         if (response.FetchTime == 0)
             return Ui.ColourWhite3;
 
-        if (response.NeedsQualification || response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited)
+        if (response.NeedsQualification || response.Uncorroborated
+            || response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited)
             return Ui.ColourHq;
 
         return Ui.ColourCyan;
@@ -73,7 +83,9 @@ public partial class MainWindow
         var summary = string.IsNullOrWhiteSpace(RefreshStatusText)
             ? "Market data refreshed"
             : RefreshStatusText;
-        return $"{summary} · {fetchedAgo} ago";
+        return response.Uncorroborated
+            ? $"{summary} · not corroborated · {fetchedAgo} ago"
+            : $"{summary} · {fetchedAgo} ago";
     }
 
     private string GetMarketDataStatusTooltip()
@@ -114,13 +126,16 @@ public partial class MainWindow
         var noData = response.WorldsWithoutListingData.Count > 0
             ? $"{Market.MarketListingDataPolicy.DescribeUnavailable(response)}. This is not a fetch failure or proof of an empty market.\n"
             : "";
+        var uncorroborated = response.Uncorroborated
+            ? "Not corroborated: rows are shown as Universalis returned them, without per-world freshness checks.\n"
+            : "";
         var confidence = response.ProvisionalWorlds.Count > 0
             ? $"Provisional worlds: {string.Join(", ", response.ProvisionalWorlds.Keys)}\n" +
               "Amber rows are recent provisional or uncorroborated after the upload window elapsed.\n" +
               "These are exact returned rows; price or availability may have changed.\n" +
               "CMB rechecks automatically; the cheapest result may be provisional.\n"
             : "";
-        confidence = noData + (response.PendingWorlds.Count > 0
+        confidence = uncorroborated + noData + (response.PendingWorlds.Count > 0
             ? $"Pending verification: {string.Join(", ", response.PendingWorlds)}. Amber rows are exact observations, not confirmed prices; CMB retries automatically.\n"
             : "") + confidence + (response.HistoryPending ? "Sales history pending.\n"
             : response.HistoryFailure.Length > 0 ? "Sales history unavailable; retrying automatically.\n" : "");

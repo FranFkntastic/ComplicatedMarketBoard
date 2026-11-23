@@ -16,6 +16,8 @@ public sealed class UniversalisClient
     private readonly AsyncLocal<System.Collections.Concurrent.ConcurrentDictionary<MarketListingIdentity, byte>?> refusedIdentities = new();
     private readonly AsyncLocal<bool> backgroundReconciliation = new();
     private readonly AsyncLocal<Task?> detailAdmission = new();
+    // A user-initiated refresh skips the shared 429/503 recovery cooldown; request spacing still applies.
+    private readonly AsyncLocal<bool> bypassCooldown = new();
 
     private UniversalisResponse BrowsingSnapshot(UniversalisResponse response)
     {
@@ -68,7 +70,11 @@ public sealed class UniversalisClient
     {
         requestPacer = new UniversalisRequestPacer(
             () => P.Config.UniversalisRequestSpacingMilliseconds,
-            () => { lock (retryStateLock) return nextRequestAllowedAt; });
+            () =>
+            {
+                if (bypassCooldown.Value) return DateTimeOffset.MinValue;
+                lock (retryStateLock) return nextRequestAllowedAt;
+            });
         requestBudget = new UniversalisRequestBudget(
             () => P.Config.UniversalisMaxConcurrentRequests, requestPacer.Dispose);
         httpClient = CreateHttpClient();
@@ -113,9 +119,11 @@ public sealed class UniversalisClient
         bool requireCurrentDetails = false,
         MarketRefreshVocabulary? vocabulary = null,
         bool reconcileProvisionalOnly = false,
-        Action<UniversalisResponse>? onDetails = null)
+        Action<UniversalisResponse>? onDetails = null,
+        bool userInitiated = false)
     {
         publishDetails.Value = onDetails;
+        bypassCooldown.Value = userInitiated;
         backgroundReconciliation.Value = reconcileProvisionalOnly;
         refusedIdentities.Value = new();
         fetchSettings.Value = (P.Config.UniversalisListings, P.Config.UniversalisEntries, P.Config.UniversalisHqOnly);
@@ -303,6 +311,8 @@ public sealed class UniversalisClient
                 || retained.Listings.Count != gameItem.UniversalisResponse.Listings.Count)
                 response = retained;
         }
+        if (!requireCurrentDetails && response.Status == UniversalisResponseStatus.Success)
+            response.Uncorroborated = true;
         return MarketListingCoveragePolicy.Classify(
             response,
             ListingLimit,
@@ -1207,8 +1217,7 @@ public sealed class UniversalisClient
                         var failure = CreateServerError(response.StatusCode);
                         if (!IsTransient(response.StatusCode) || attempt == AggregateMaxAttempts)
                         {
-                            if (IsTransient(response.StatusCode))
-                                StartFailureCooldown();
+                            StartFailureCooldown(response.StatusCode);
 
                             return (null, failure);
                         }
@@ -1277,7 +1286,6 @@ public sealed class UniversalisClient
                         $"after {AggregateRequestTimeout.TotalSeconds:F0}s.");
                     if (attempt == AggregateMaxAttempts)
                     {
-                        StartFailureCooldown();
                         return (null, new UniversalisResponse
                         {
                             Status = UniversalisResponseStatus.UserCancellation,
@@ -1309,7 +1317,6 @@ public sealed class UniversalisClient
                         attempt);
                     if (attempt == AggregateMaxAttempts)
                     {
-                        StartFailureCooldown();
                         Service.Log.Warning(ex, "[Universalis] Aggregate probe connection failed after all retry attempts.");
                         return (null, new UniversalisResponse
                         {
@@ -1750,8 +1757,7 @@ public sealed class UniversalisClient
                         var failure = CreateServerError(response.StatusCode);
                         if (!IsTransient(response.StatusCode) || attempt == MaxAttempts)
                         {
-                            if (IsTransient(response.StatusCode))
-                                StartFailureCooldown();
+                            StartFailureCooldown(response.StatusCode);
 
                             Service.Log.Warning($"[Universalis] HTTP request not successful: {response.StatusCode}");
                             return failure;
@@ -1857,7 +1863,6 @@ public sealed class UniversalisClient
                         verificationPass);
                     if (attempt == MaxAttempts)
                     {
-                        StartFailureCooldown();
                         Service.Log.Warning($"[Universalis] Request timed out after {requestTimeout.TotalSeconds:F0}s.");
                         return new UniversalisResponse
                         {
@@ -1891,7 +1896,6 @@ public sealed class UniversalisClient
                         verificationPass);
                     if (attempt == MaxAttempts)
                     {
-                        StartFailureCooldown();
                         Service.Log.Warning(ex, "[Universalis] Connection failed after all retry attempts.");
                         return new UniversalisResponse
                         {
@@ -1951,8 +1955,7 @@ public sealed class UniversalisClient
         var url = $"{Host}/api/v2/{Uri.EscapeDataString(target)}/{string.Join(",", ids)}?entries=0&hq={(hq ? 1 : 0)}&listings={limit}";
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         using var response = await SendRequestAsync(request, TimeSpan.FromSeconds(P.Config.RequestTimeout), target, 0, null, token);
-        if (IsTransient(response.StatusCode))
-            StartFailureCooldown();
+        StartFailureCooldown(response.StatusCode);
         response.EnsureSuccessStatusCode();
         using var json = await response.Content.ReadFromJsonAsync<JsonDocument>(UniversalisJsonOptions, token)
             ?? throw new JsonException("Empty Universalis response.");
@@ -1980,11 +1983,12 @@ public sealed class UniversalisClient
         CancellationToken cancellationToken)
     {
         using var lease = await requestBudget.EnterAsync(cancellationToken);
-        await WaitForSharedCooldownAsync(
-            targetName,
-            progress,
-            reportProgress,
-            cancellationToken);
+        if (!bypassCooldown.Value)
+            await WaitForSharedCooldownAsync(
+                targetName,
+                progress,
+                reportProgress,
+                cancellationToken);
         await requestPacer.WaitAsync(cancellationToken);
 
         using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -2093,8 +2097,13 @@ public sealed class UniversalisClient
             maximumDelay.TotalMilliseconds,
             initialDelay.TotalMilliseconds * Math.Pow(3, Math.Max(0, attempt - 1))));
 
-    private void StartFailureCooldown()
+    // Only Universalis rate-limit/overload answers start the shared cooldown; timeouts,
+    // connection failures and other errors are per-request and retry on their own backoff.
+    private void StartFailureCooldown(System.Net.HttpStatusCode statusCode)
     {
+        if (statusCode is not (System.Net.HttpStatusCode.TooManyRequests or System.Net.HttpStatusCode.ServiceUnavailable))
+            return;
+        Service.Log.Warning($"[Universalis] {statusCode}: pausing automatic requests for {FailureCooldown.TotalSeconds:F0}s; a manual refresh skips this.");
         lock (retryStateLock)
         {
             var cooldownUntil = DateTimeOffset.UtcNow + FailureCooldown;
