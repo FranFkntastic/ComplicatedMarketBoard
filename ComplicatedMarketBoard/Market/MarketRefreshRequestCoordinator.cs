@@ -20,6 +20,8 @@ public sealed record MarketRefreshRequestContext(
     public bool ChatNotificationPublished { get; set; }
     public bool ToastNotificationPublished { get; set; }
     public CancellationTokenSource? EligibilityTimer { get; set; }
+    // Cancelled by "Stop retrying" to end background corroboration without discarding results.
+    public volatile CancellationTokenSource? ReconcileStop;
 }
 
 public sealed class MarketRefreshRequestCoordinator : IDisposable
@@ -55,6 +57,16 @@ public sealed class MarketRefreshRequestCoordinator : IDisposable
         lock (requestLock)
             return request.Version == requestVersion
                    && !request.Cancellation.IsCancellationRequested;
+    }
+
+    public MarketRefreshRequestContext? ReconcilingRequest(ulong itemId)
+    {
+        lock (requestLock)
+            return activeRequest is { IsReconciling: true, ReconcileStop: not null } current
+                   && current.Key.ItemId == itemId
+                   && !current.Cancellation.IsCancellationRequested
+                ? current
+                : null;
     }
 
     public void End(MarketRefreshRequestContext request)

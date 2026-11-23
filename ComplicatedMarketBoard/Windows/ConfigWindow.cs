@@ -598,6 +598,21 @@ public class ConfigWindow : Window, IDisposable
             "Range: 50-1000 ms. Default: 200 ms.");
         ImGui.NextColumn();
 
+        ImGui.TextColored(Ui.ColourWhiteDim, "　Corroborate listings");
+        ImGui.NextColumn();
+        var requireCurrentListingDetails = P.Config.RequireCurrentListingDetails;
+        if (ImGui.Checkbox($"{suffix}RequireCurrentListingDetails", ref requireCurrentListingDetails))
+        {
+            P.Config.RequireCurrentListingDetails = requireCurrentListingDetails;
+            P.Config.Save();
+        }
+        ImGuiComponents.HelpMarker(
+            "On: check every world's freshness before confirming listing rows, and keep retrying in the background.\n" +
+            "Off: show rows as Universalis returns them, marked \"not corroborated\". Faster, fewer requests.\n" +
+            "Display only; MarketMafioso lookups are unaffected.\n" +
+            "Default: off.");
+        ImGui.NextColumn();
+
         // UniversalisListings
         ImGui.TextColored(Ui.ColourWhiteDim, "　Selling records numbers");
         ImGui.NextColumn();

@@ -77,6 +77,8 @@ public class ComplicatedMarketBoardConfig
     public int RequestTimeout = 20;
     public int UniversalisMaxConcurrentRequests = UniversalisRequestBudget.DefaultConcurrency;
     public int UniversalisRequestSpacingMilliseconds = UniversalisRequestPacer.DefaultSpacingMilliseconds;
+    // Display refreshes only. Off shows Universalis rows as returned, badged "not corroborated".
+    public bool RequireCurrentListingDetails = false;
 
     internal bool NormalizeUniversalisRequestSpacing()
     {

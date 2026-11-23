@@ -143,6 +143,8 @@ internal sealed class CompetitionIpcProvider : IDisposable
                 {
                     var rows = new List<Listing>();
                     long upload = 0;
+                    var returned = 0;
+                    var dropped = 0;
                     foreach (var part in partitions)
                     {
                         if (!part.Items.TryGetValue(id, out var data))
@@ -150,14 +152,23 @@ internal sealed class CompetitionIpcProvider : IDisposable
                         upload = Math.Max(upload, data.LastUploadTime);
                         foreach (var l in data.Listings)
                         {
+                            returned++;
                             var world = string.IsNullOrWhiteSpace(l.WorldName) ? part.World : l.WorldName;
+                            // Never pass an incomplete or mismatched row to a pricing consumer; drop just that row.
                             if (world == null || string.IsNullOrWhiteSpace(l.RetainerName) || l.Hq != hq || l.PricePerUnit <= 0 || l.Quantity <= 0)
-                                throw new InvalidOperationException("Universalis returned an incomplete or mismatched listing.");
+                            {
+                                dropped++;
+                                continue;
+                            }
                             rows.Add(new(l.PricePerUnit, l.Quantity, hq, world, l.RetainerName));
                         }
                     }
+                    if (dropped > 0 && rows.Count == 0)
+                        throw new InvalidOperationException($"Universalis returned {dropped} listing(s), all incomplete or mismatched.");
+                    if (dropped > 0)
+                        Warn(key, id, $"dropped {dropped} of {returned} incomplete or mismatched listing(s); returning the rest.");
                     results[id] = new(id, hq, "fresh", null, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(), upload,
-                        rows.Count > limit, rows.OrderBy(l => l.PricePerUnit).Take(limit).ToArray());
+                        returned > limit, rows.OrderBy(l => l.PricePerUnit).Take(limit).ToArray());
                 }
                 catch (Exception ex) { errors[id] = ex.Message; }
             }

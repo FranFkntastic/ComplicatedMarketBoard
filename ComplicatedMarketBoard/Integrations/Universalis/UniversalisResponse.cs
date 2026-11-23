@@ -31,6 +31,8 @@ public class UniversalisResponse
     public bool HistoryPending { get; set; }
     public string HistoryFailure { get; set; } = "";
     public bool ListingRefillPending { get; set; }
+    // Rows shown as returned, without per-world freshness corroboration (display only).
+    public bool Uncorroborated { get; set; }
     public bool NeedsListingReconciliation => PendingWorlds.Count > 0 || ProvisionalWorlds.Count > 0 || ListingRefillPending;
     // Preserve the original custom-target weighting when retrying only sales history.
     public Dictionary<string, int> HistoryListingWeights { get; set; } = new(StringComparer.OrdinalIgnoreCase);
