@@ -72,7 +72,6 @@ public sealed class UniversalisClient
             () => P.Config.UniversalisRequestSpacingMilliseconds,
             () =>
             {
-                if (bypassCooldown.Value) return DateTimeOffset.MinValue;
                 lock (retryStateLock) return nextRequestAllowedAt;
             });
         requestBudget = new UniversalisRequestBudget(
@@ -1982,14 +1981,17 @@ public sealed class UniversalisClient
         Action<UniversalisRequestProgress>? reportProgress,
         CancellationToken cancellationToken)
     {
-        using var lease = await requestBudget.EnterAsync(cancellationToken);
-        if (!bypassCooldown.Value)
+        var ignoreCooldown = bypassCooldown.Value;
+        // Wait out the cooldown before taking a budget slot, so sleeping background
+        // requests never hold slots a manual refresh needs.
+        if (!ignoreCooldown)
             await WaitForSharedCooldownAsync(
                 targetName,
                 progress,
                 reportProgress,
                 cancellationToken);
-        await requestPacer.WaitAsync(cancellationToken);
+        using var lease = await requestBudget.EnterAsync(cancellationToken);
+        await requestPacer.WaitAsync(ignoreCooldown, cancellationToken);
 
         using var requestTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         requestTimeout.CancelAfter(timeout);

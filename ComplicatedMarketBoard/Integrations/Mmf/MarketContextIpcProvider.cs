@@ -136,6 +136,9 @@ public sealed class MarketContextIpcProvider : IDisposable
             }
         }
         var homeAvailable = home is { Status: UniversalisResponseStatus.Success };
+        // The NQ fallback failed: don't let the DC fetch or partial context drift to NQ.
+        if (!homeAvailable)
+            highQuality = requestedQuality;
 
         var dataCenterName = ResolveDataCenterName();
         UniversalisResponse? datacenter = null;
@@ -171,13 +174,18 @@ public sealed class MarketContextIpcProvider : IDisposable
         // Home world unavailable: return what we have instead of nothing. A previous home
         // reading is kept with its original freshness and marked stale.
         var previous = cache.Get((itemId, requestedQuality));
-        var stale = previous is { Found: true, Value: { } prior } && prior.HomeWorldPrice is not null ? prior : null;
+        // Only reuse a reading of the same quality as the DC data fetched above.
+        var stale = previous is { Found: true, Value: { } prior }
+                    && prior.HomeWorldPrice is not null
+                    && prior.HighQuality == highQuality
+            ? prior
+            : null;
         if (stale is null && dcBestPrice is null)
             return null;
         Service.Log.Warning($"[CMB IPC] GetMarketContext {itemId}: home world data unavailable; returning partial context.");
         return new MarketContextResponse(
             itemId,
-            stale?.HighQuality ?? highQuality,
+            highQuality,
             stale?.HomeWorldPrice,
             dcBestWorld ?? stale?.DatacenterBestWorld,
             dcBestPrice ?? stale?.DatacenterBestPrice,

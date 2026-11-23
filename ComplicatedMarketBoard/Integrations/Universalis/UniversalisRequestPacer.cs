@@ -2,7 +2,8 @@ using System.Threading;
 
 namespace ComplicatedMarketBoard.Integrations.Universalis;
 
-// One service-wide admission timeline; faster preferences never bypass recovery cooldowns.
+// One service-wide admission timeline. Spacing applies to every request; the recovery cooldown
+// applies unless the caller explicitly ignores it (user-initiated refresh).
 internal sealed class UniversalisRequestPacer(
     Func<int> configuredSpacingMilliseconds,
     Func<DateTimeOffset> cooldownUntil,
@@ -20,37 +21,50 @@ internal sealed class UniversalisRequestPacer(
     internal static int Normalize(int value) => Math.Clamp(value, MinimumSpacingMilliseconds, MaximumSpacingMilliseconds);
     internal int SpacingMilliseconds => Normalize(configuredSpacingMilliseconds());
 
-    internal async Task WaitAsync(CancellationToken cancellationToken)
+    internal async Task WaitAsync(bool ignoreCooldown, CancellationToken cancellationToken)
     {
-        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try
+        while (true)
         {
-            while (true)
+            // Wait out the cooldown without holding the gate, so a cooldown-exempt
+            // request is never queued behind one that is sleeping through it.
+            if (!ignoreCooldown)
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                var current = now();
-                var allowedAt = cooldownUntil();
-                if (lastStartAt is { } previous)
+                var cooldownRemaining = cooldownUntil() - now();
+                if (cooldownRemaining > TimeSpan.Zero)
                 {
-                    var spacedAt = previous.AddMilliseconds(SpacingMilliseconds);
-                    if (spacedAt > allowedAt)
-                        allowedAt = spacedAt;
+                    await delay(cooldownRemaining, cancellationToken).ConfigureAwait(false);
+                    continue;
                 }
-
-                var remaining = allowedAt - current;
-                if (remaining <= TimeSpan.Zero)
-                {
-                    lastStartAt = current;
-                    return;
-                }
-
-                // Re-read both preferences and shared cooldown after every wait.
-                await delay(remaining, cancellationToken).ConfigureAwait(false);
             }
-        }
-        finally
-        {
-            gate.Release();
+
+            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+            try
+            {
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    var current = now();
+                    // A cooldown started while we queued: go back and wait it out off the gate.
+                    if (!ignoreCooldown && cooldownUntil() > current)
+                        break;
+
+                    var remaining = lastStartAt is { } previous
+                        ? previous.AddMilliseconds(SpacingMilliseconds) - current
+                        : TimeSpan.Zero;
+                    if (remaining <= TimeSpan.Zero)
+                    {
+                        lastStartAt = current;
+                        return;
+                    }
+
+                    // Re-read spacing preference and cooldown after every wait.
+                    await delay(remaining, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            finally
+            {
+                gate.Release();
+            }
         }
     }
 

@@ -432,94 +432,101 @@ public sealed class MarketRefreshService
         request.IsReconciling = true;
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(request.Cancellation.Token);
         request.ReconcileStop = stop;
-        var retry = 0;
-        while (gameItem.UniversalisResponse.NeedsListingReconciliation
-               || gameItem.UniversalisResponse.HistoryPending
-               || gameItem.UniversalisResponse.HistoryFailure.Length > 0)
+        try
         {
-            var giveUpReason = retry >= MaxReconcileAttempts
-                ? $"gave up after {MaxReconcileAttempts} attempts"
-                : ProvisionalWindowElapsed(gameItem.UniversalisResponse)
-                    ? "provisional window elapsed"
-                    : null;
-            if (giveUpReason is not null)
+            var retry = 0;
+            while (gameItem.UniversalisResponse.NeedsListingReconciliation
+                   || gameItem.UniversalisResponse.HistoryPending
+                   || gameItem.UniversalisResponse.HistoryFailure.Length > 0)
             {
-                GiveUp(giveUpReason);
-                return;
-            }
-            try
-            {
-                await Task.Delay(TimeSpan.FromSeconds(Math.Min(300, 30 * Math.Pow(2, Math.Min(retry++, 4)))),
-                    stop.Token);
-            }
-            catch (OperationCanceledException) when (!request.Cancellation.IsCancellationRequested)
-            {
-                GiveUp("stopped by user");
-                return;
-            }
-            if (!requestCoordinator.IsCurrent(request)
-                || request.Key.TargetScope != GetRequestIdentity(gameItem.TargetRegion))
-                return;
-            ExpireDisplayedQualifications();
-
-            UniversalisResponse response;
-            using var recheck = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
-            recheck.CancelAfter(P.Universalis.ReconciliationAttemptTimeout(gameItem));
-            try
-            {
-                var reconciliationIdentity = GetRequestIdentity(gameItem.TargetRegion);
-                if (gameItem.CachedRequestIdentity != reconciliationIdentity)
-                    gameItem.CachedRequestIdentity = "";
-                var attempt = P.Universalis.GetDataAsync(
-                    gameItem.Snapshot(), recheck.Token, requireCurrentDetails: true,
-                    vocabulary: vocabulary, reconcileProvisionalOnly: true);
-                response = await attempt;
-                if (reconciliationIdentity != GetRequestIdentity(gameItem.TargetRegion))
-                    gameItem.CachedRequestIdentity = "";
-            }
-            catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { throw; }
-            catch (OperationCanceledException)
-            {
+                var giveUpReason = retry >= MaxReconcileAttempts
+                    ? $"gave up after {MaxReconcileAttempts} attempts"
+                    : ProvisionalWindowElapsed(gameItem.UniversalisResponse)
+                        ? "provisional window elapsed"
+                        : null;
+                if (giveUpReason is not null)
+                {
+                    GiveUp(giveUpReason);
+                    return;
+                }
+                try
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(Math.Min(300, 30 * Math.Pow(2, Math.Min(retry++, 4)))),
+                        stop.Token);
+                }
+                catch (OperationCanceledException) when (!request.Cancellation.IsCancellationRequested)
+                {
+                    GiveUp("stopped by user");
+                    return;
+                }
+                if (!requestCoordinator.IsCurrent(request)
+                    || request.Key.TargetScope != GetRequestIdentity(gameItem.TargetRegion))
+                    return;
                 ExpireDisplayedQualifications();
-                continue;
-            }
-            catch (Exception exception)
-            {
-                Service.Log.Warning(exception, "[MarketRefresh] Background corroboration failed; preserving qualified results and retrying.");
-                continue;
-            }
-            request.Cancellation.Token.ThrowIfCancellationRequested();
-            if (!requestCoordinator.IsCurrent(request)
-                || request.Key.TargetScope != GetRequestIdentity(gameItem.TargetRegion))
-                return;
-            ExpireDisplayedQualifications();
-            if (response.Status != UniversalisResponseStatus.Success)
-            {
-                Service.Log.Warning($"[MarketRefresh] Background corroboration unavailable: {GetUniversalisFailureText(response)}; retrying automatically.");
-                continue;
-            }
 
-            Publish(request, () =>
-            {
-                if (request.Key.TargetScope != GetRequestIdentity(gameItem.TargetRegion)) return;
-                MarketProvisionalListingPolicy.ExpireDisplayedQualifications(response, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
-                gameItem.UniversalisResponse = response;
-                gameItem.Observations.Remember(gameItem.CachedRequestIdentity, response);
-                gameItem.WorldOutOfDate = response.WorldOutOfDate;
-                gameItem.AvgPrice = response.AveragePrice;
-                P.MainWindow.CurrentItemUpdate(gameItem);
-                PublishFirst(request, gameItem);
-                P.MainWindow.CompleteMarketDataRefresh(gameItem.Name,
-                    response.NeedsQualification
-                        ? MarketProvisionalListingPolicy.Summary(response)
-                        : MarketListingDataPolicy.CompletionSummary(response, gameItem.Name)
-                          ?? vocabulary.PartiallyConfirmed(gameItem.Name, response.DeferredWorlds.Keys.ToArray(),
-                            response.Listings.Count, response.RequestedListingCount,
-                            response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited));
-                Service.Log.Info($"[MarketRefresh] Background corroboration: {response.ProvisionalWorlds.Count} provisional, {response.DeferredWorlds.Count} deferred world(s).");
-            });
+                UniversalisResponse response;
+                using var recheck = CancellationTokenSource.CreateLinkedTokenSource(stop.Token);
+                recheck.CancelAfter(P.Universalis.ReconciliationAttemptTimeout(gameItem));
+                try
+                {
+                    var reconciliationIdentity = GetRequestIdentity(gameItem.TargetRegion);
+                    if (gameItem.CachedRequestIdentity != reconciliationIdentity)
+                        gameItem.CachedRequestIdentity = "";
+                    var attempt = P.Universalis.GetDataAsync(
+                        gameItem.Snapshot(), recheck.Token, requireCurrentDetails: request.Key.RequireCurrentDetails,
+                        vocabulary: vocabulary, reconcileProvisionalOnly: true);
+                    response = await attempt;
+                    if (reconciliationIdentity != GetRequestIdentity(gameItem.TargetRegion))
+                        gameItem.CachedRequestIdentity = "";
+                }
+                catch (OperationCanceledException) when (request.Cancellation.IsCancellationRequested) { throw; }
+                catch (OperationCanceledException)
+                {
+                    ExpireDisplayedQualifications();
+                    continue;
+                }
+                catch (Exception exception)
+                {
+                    Service.Log.Warning(exception, "[MarketRefresh] Background corroboration failed; preserving qualified results and retrying.");
+                    continue;
+                }
+                request.Cancellation.Token.ThrowIfCancellationRequested();
+                if (!requestCoordinator.IsCurrent(request)
+                    || request.Key.TargetScope != GetRequestIdentity(gameItem.TargetRegion))
+                    return;
+                ExpireDisplayedQualifications();
+                if (response.Status != UniversalisResponseStatus.Success)
+                {
+                    Service.Log.Warning($"[MarketRefresh] Background corroboration unavailable: {GetUniversalisFailureText(response)}; retrying automatically.");
+                    continue;
+                }
+
+                Publish(request, () =>
+                {
+                    if (request.Key.TargetScope != GetRequestIdentity(gameItem.TargetRegion)) return;
+                    MarketProvisionalListingPolicy.ExpireDisplayedQualifications(response, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+                    gameItem.UniversalisResponse = response;
+                    gameItem.Observations.Remember(gameItem.CachedRequestIdentity, response);
+                    gameItem.WorldOutOfDate = response.WorldOutOfDate;
+                    gameItem.AvgPrice = response.AveragePrice;
+                    P.MainWindow.CurrentItemUpdate(gameItem);
+                    PublishFirst(request, gameItem);
+                    P.MainWindow.CompleteMarketDataRefresh(gameItem.Name,
+                        response.NeedsQualification
+                            ? MarketProvisionalListingPolicy.Summary(response)
+                            : MarketListingDataPolicy.CompletionSummary(response, gameItem.Name)
+                              ?? vocabulary.PartiallyConfirmed(gameItem.Name, response.DeferredWorlds.Keys.ToArray(),
+                                response.Listings.Count, response.RequestedListingCount,
+                                response.ListingCoverage == MarketListingCoverageStatus.DuplicateLimited));
+                    Service.Log.Info($"[MarketRefresh] Background corroboration: {response.ProvisionalWorlds.Count} provisional, {response.DeferredWorlds.Count} deferred world(s).");
+                });
+            }
         }
-        request.ReconcileStop = null;
+        finally
+        {
+            // Every exit path, including the early returns, retires the Stop button.
+            request.ReconcileStop = null;
+        }
 
         // Accept the displayed rows as they are: keep them, stop retrying, and let
         // notifications fire on what we have.
