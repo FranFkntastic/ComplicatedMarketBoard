@@ -897,13 +897,14 @@ public partial class MainWindow : Window, IDisposable
     {
         if (!P.Config.EnableRecentHistory)
         {
-            DrawCurrentListingTable(availableHeight);
+            DrawCurrentListingTable(Math.Max(MinimumTableHeight, availableHeight));
             return;
         }
 
         var gap = Math.Max(0, P.Config.spaceBetweenTables);
+        var maxListingHeight = Math.Max(MinimumTableHeight, availableHeight - MinimumTableHeight - ResizeHandleHeight - gap);
         var listingHeight = availableHeight / 2 + P.Config.soldTableOffset;
-        listingHeight = Math.Clamp(listingHeight, MinimumTableHeight, availableHeight - MinimumTableHeight - ResizeHandleHeight - gap);
+        listingHeight = Math.Clamp(listingHeight, MinimumTableHeight, maxListingHeight);
         var historyHeight = Math.Max(MinimumTableHeight, availableHeight - listingHeight - ResizeHandleHeight - gap);
 
         DrawCurrentListingTable(listingHeight);
@@ -912,7 +913,7 @@ public partial class MainWindow : Window, IDisposable
         {
             var baseHeight = availableHeight / 2;
             var minOffset = MinimumTableHeight - baseHeight;
-            var maxOffset = availableHeight - MinimumTableHeight - ResizeHandleHeight - gap - baseHeight;
+            var maxOffset = Math.Max(minOffset, maxListingHeight - baseHeight);
             var offset = (int)Math.Round(Math.Clamp(P.Config.soldTableOffset + splitDelta, minOffset, maxOffset));
             if (offset != P.Config.soldTableOffset)
             {
